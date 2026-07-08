@@ -38,8 +38,10 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       # `npm version` edits package.json, makes the commit, and tags it vX.Y.Z.
+      # Block scalar (|) so the colon in the commit message doesn't break YAML.
       - name: Bump version and tag
-        run: npm version ${{ inputs.bump }} -m "chore: release v%s"
+        run: |
+          npm version ${{ inputs.bump }} -m "chore: release v%s"
 
       - name: Push commit and tag
         run: git push --follow-tags
