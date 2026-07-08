@@ -5,8 +5,9 @@
  * Extracted from a family of vanilla-JS arcade games. Gives you the parts every
  * one of them needs — a DPI-aware canvas, a render-safe game loop, keyboard /
  * mouse / touch input, a Supabase-or-localStorage leaderboard, overlay screens
- * with retro 3-initial high-score entry, and drawing helpers — so a game is
- * just its own update()/render() and level data.
+ * with retro 3-initial high-score entry, drawing helpers, synthesized 8-bit
+ * sound, screen-shake/flash/freeze game-feel, collision tests, and namespaced
+ * storage — so a game is just its own update()/render() and level data.
  *
  * UMD: works as a <script> global (window.Retroix) or via import/require.
  */
@@ -16,7 +17,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
 	'use strict';
 
-	var Retroix = { version: '0.1.0' };
+	var Retroix = { version: '0.2.0' };
 
 	/* ------------------------------- util --------------------------------- */
 
@@ -289,6 +290,191 @@
 	Retroix.toast = function (el) {
 		var timer;
 		return function (msg, ms) { el.textContent = msg; el.classList.add('rx-toast--show'); clearTimeout(timer); timer = setTimeout(function () { el.classList.remove('rx-toast--show'); }, ms || 1400); };
+	};
+
+	/* ------------------------------- audio -------------------------------- */
+
+	// 8-bit sound with zero sample files — everything is synthesized on the Web
+	// Audio API. `var sfx = Retroix.audio();` then sfx.coin() / sfx.explosion(),
+	// sfx.play('laser'), sfx.jingle('win'), or sfx.tone({ ... }) for a custom
+	// blip. Browsers block audio until a user gesture, so the first key or tap
+	// auto-unlocks it. Mute/volume persist in localStorage by default.
+	var A4 = 440, SEMI = { C: -9, D: -7, E: -5, F: -4, G: -2, A: 0, B: 2 };
+	function noteFreq(n) {
+		if (typeof n === 'number') { return n; }
+		var m = /^([A-Ga-g])([#b]?)(-?\d)$/.exec(n);
+		if (!m) { return 440; }
+		var s = SEMI[m[1].toUpperCase()] + (m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0) + (parseInt(m[3], 10) - 4) * 12;
+		return A4 * Math.pow(2, s / 12);
+	}
+	function mergeObj(a, b) { var o = {}, k; for (k in a) { o[k] = a[k]; } for (k in b) { o[k] = b[k]; } return o; }
+
+	Retroix.audio = function (opts) {
+		opts = opts || {};
+		var AC = window.AudioContext || window.webkitAudioContext;
+		var STORE = 'rx-audio', persist = opts.persist !== false, saved = {};
+		if (persist) { try { saved = JSON.parse(localStorage.getItem(STORE)) || {}; } catch (e) {} }
+		var vol = saved.volume != null ? saved.volume : (opts.volume != null ? opts.volume : 0.35);
+		var isMuted = saved.muted != null ? saved.muted : !!opts.muted;
+		var ctx = null, master = null, noiseBuf = null;
+
+		function ensure() {
+			if (!AC) { return false; }
+			if (!ctx) { ctx = new AC(); master = ctx.createGain(); master.gain.value = isMuted ? 0 : vol; master.connect(ctx.destination); }
+			if (ctx.state === 'suspended') { ctx.resume(); }
+			return true;
+		}
+		function save() { if (persist) { try { localStorage.setItem(STORE, JSON.stringify({ volume: vol, muted: isMuted })); } catch (e) {} } }
+		function noiseSource() {
+			if (!noiseBuf) { noiseBuf = ctx.createBuffer(1, (ctx.sampleRate * 0.5) | 0, ctx.sampleRate); var d = noiseBuf.getChannelData(0); for (var i = 0; i < d.length; i++) { d[i] = Math.random() * 2 - 1; } }
+			var s = ctx.createBufferSource(); s.buffer = noiseBuf; s.loop = true; return s;
+		}
+
+		// One tone/blip. spec: { wave, freq, freqEnd, dur, attack, release, vol,
+		// type:'noise', filter } — freqEnd slides the pitch (jump/laser/hit).
+		function tone(spec, when) {
+			if (!ensure()) { return 0; }
+			spec = spec || {};
+			var t0 = when != null ? when : ctx.currentTime;
+			var dur = spec.dur || 0.12, atk = spec.attack != null ? spec.attack : 0.005;
+			var rel = spec.release != null ? spec.release : Math.min(0.08, dur * 0.5);
+			var peak = Math.max(0.0001, (spec.vol != null ? spec.vol : 1));
+			var g = ctx.createGain();
+			g.gain.setValueAtTime(0.0001, t0);
+			g.gain.exponentialRampToValueAtTime(peak, t0 + atk);
+			g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+			var src;
+			if (spec.type === 'noise') {
+				src = noiseSource();
+				if (spec.filter !== false) {
+					var flt = ctx.createBiquadFilter(); flt.type = 'lowpass';
+					flt.frequency.setValueAtTime(spec.filter || 1800, t0);
+					flt.frequency.exponentialRampToValueAtTime(200, t0 + dur);
+					src.connect(flt); flt.connect(g);
+				} else { src.connect(g); }
+			} else {
+				var osc = ctx.createOscillator(); osc.type = spec.wave || 'square';
+				osc.frequency.setValueAtTime(noteFreq(spec.freq || 440), t0);
+				if (spec.freqEnd) { osc.frequency.exponentialRampToValueAtTime(Math.max(1, noteFreq(spec.freqEnd)), t0 + dur); }
+				osc.connect(g); src = osc;
+			}
+			g.connect(master);
+			src.start(t0); src.stop(t0 + dur + rel);
+			return dur;
+		}
+
+		// Notes back-to-back. `notes` is [{ freq, dur, wave }] or shorthand
+		// strings like 'C5:0.1' / 'E5' (dur falls back to common.dur). Returns
+		// the total length in seconds.
+		function sequence(notes, common) {
+			if (!ensure()) { return 0; }
+			common = common || {};
+			var t = ctx.currentTime, gap = common.gap || 0, start = t;
+			for (var i = 0; i < notes.length; i++) {
+				var n = notes[i], spec;
+				if (typeof n === 'string') { var p = n.split(':'); spec = mergeObj(common, { freq: p[0], dur: p[1] ? +p[1] : (common.dur || 0.12) }); }
+				else { spec = mergeObj(common, n); }
+				tone(spec, t);
+				t += (spec.dur || 0.12) + gap;
+			}
+			return t - start;
+		}
+
+		var SFX = {
+			blip: function () { tone({ wave: 'square', freq: 880, dur: 0.06, vol: 0.7 }); },
+			select: function () { tone({ wave: 'square', freq: 660, freqEnd: 990, dur: 0.08, vol: 0.7 }); },
+			coin: function () { sequence(['B5:0.07', 'E6:0.16'], { wave: 'square', vol: 0.7 }); },
+			jump: function () { tone({ wave: 'square', freq: 220, freqEnd: 660, dur: 0.16, vol: 0.7 }); },
+			laser: function () { tone({ wave: 'sawtooth', freq: 900, freqEnd: 120, dur: 0.2, vol: 0.6 }); },
+			powerup: function () { sequence(['C5:0.06', 'E5:0.06', 'G5:0.06', 'C6:0.14'], { wave: 'square', vol: 0.6 }); },
+			hit: function () { tone({ type: 'noise', dur: 0.12, filter: 1200, vol: 0.7 }); tone({ wave: 'square', freq: 160, freqEnd: 80, dur: 0.12, vol: 0.5 }); },
+			explosion: function () { tone({ type: 'noise', dur: 0.5, filter: 900, vol: 0.9 }); }
+		};
+		var JINGLES = {
+			win: ['C5:0.12', 'E5:0.12', 'G5:0.12', 'C6:0.3'],
+			lose: ['G4:0.14', 'E4:0.14', 'C4:0.36'],
+			levelup: ['E5:0.1', 'G5:0.1', 'C6:0.1', 'E6:0.28'],
+			gameover: ['C5:0.18', 'G4:0.18', 'E4:0.18', 'C4:0.42']
+		};
+
+		var api = {
+			ctx: function () { return ctx; },
+			tone: tone, sequence: sequence,
+			play: function (name, o) { if (SFX[name]) { SFX[name](); } else { tone(mergeObj({ freq: name }, o || {})); } return api; },
+			jingle: function (name, common) { var j = JINGLES[name]; if (j) { sequence(j, mergeObj({ wave: 'square', vol: 0.6 }, common || {})); } return api; },
+			unlock: function () { ensure(); return api; },
+			muted: function () { return isMuted; },
+			mute: function (v) { isMuted = v == null ? true : !!v; if (master) { master.gain.value = isMuted ? 0 : vol; } save(); return api; },
+			toggle: function () { return api.mute(!isMuted); },
+			volume: function (v) { if (v == null) { return vol; } vol = util.clamp(+v, 0, 1); if (master && !isMuted) { master.gain.value = vol; } save(); return api; },
+			sfx: SFX, jingles: JINGLES, noteFreq: noteFreq
+		};
+		// Direct helpers: sfx.coin(), sfx.explosion(), … each returns api.
+		Object.keys(SFX).forEach(function (k) { api[k] = function () { SFX[k](); return api; }; });
+		// First user gesture unlocks the audio context (browser autoplay policy).
+		function unlock() { ensure(); }
+		['pointerdown', 'keydown', 'touchstart'].forEach(function (ev) { window.addEventListener(ev, unlock, { once: true }); });
+		return api;
+	};
+
+	/* -------------------------------- fx ---------------------------------- */
+
+	// Game feel: screen shake, a full-screen flash, and freeze-frame (hitstop).
+	//   var fx = Retroix.fx(view);            // pass the canvas api or {width,height}
+	//   fx.update(dt); if (!fx.frozen()) { updateWorld(dt); }
+	//   fx.preRender(ctx); drawWorld(); fx.postRender(ctx);
+	Retroix.fx = function (dims, opts) {
+		opts = opts || {};
+		var W = dims.width, H = dims.height;
+		var maxShake = opts.maxShake || 14, decay = opts.decay || 1.4, flashTime = opts.flashTime || 0.25;
+		var trauma = 0, sx = 0, sy = 0, flashColor = '#fff', flashA = 0, flashDecay = 0, freezeT = 0;
+		return {
+			// Add shake. amount 0..1 (~0.3 a bump, ~0.7 a big hit); stacks, capped.
+			shake: function (amount) { trauma = util.clamp(trauma + (amount == null ? 0.5 : amount), 0, 1); },
+			// Flash the screen: flash('#fff', 0.6) or flash('#f22').
+			flash: function (color, strength) { flashColor = color || '#fff'; flashA = strength == null ? 0.6 : strength; flashDecay = flashA / flashTime; },
+			// Freeze the world for `dur` seconds; gate your updates with frozen().
+			freeze: function (dur) { freezeT = Math.max(freezeT, dur == null ? 0.06 : dur); },
+			frozen: function () { return freezeT > 0; },
+			trauma: function () { return trauma; },
+			update: function (dt) {
+				if (freezeT > 0) { freezeT -= dt; }
+				if (trauma > 0) { trauma = Math.max(0, trauma - decay * dt); var m = maxShake * trauma * trauma; sx = util.rand(-m, m); sy = util.rand(-m, m); }
+				else { sx = sy = 0; }
+				if (flashA > 0) { flashA = Math.max(0, flashA - flashDecay * dt); }
+			},
+			// Wrap your world drawing between these two.
+			preRender: function (ctx) { ctx.save(); ctx.translate(sx, sy); },
+			postRender: function (ctx) { ctx.restore(); if (flashA > 0) { ctx.save(); ctx.globalAlpha = flashA; ctx.fillStyle = flashColor; ctx.fillRect(0, 0, W, H); ctx.restore(); } }
+		};
+	};
+
+	/* -------------------------------- hit --------------------------------- */
+
+	// Overlap tests. Rects are { x, y, w, h } (top-left); circles are { x, y, r }.
+	Retroix.hit = {
+		rects: function (a, b) { return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y; },
+		circles: function (a, b) { var dx = a.x - b.x, dy = a.y - b.y, r = a.r + b.r; return dx * dx + dy * dy < r * r; },
+		circleRect: function (c, r) { var nx = util.clamp(c.x, r.x, r.x + r.w), ny = util.clamp(c.y, r.y, r.y + r.h), dx = c.x - nx, dy = c.y - ny; return dx * dx + dy * dy < c.r * c.r; },
+		pointRect: function (px, py, r) { return px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h; },
+		pointCircle: function (px, py, c) { var dx = px - c.x, dy = py - c.y; return dx * dx + dy * dy < c.r * c.r; }
+	};
+
+	/* ------------------------------ storage ------------------------------- */
+
+	// Namespaced, JSON-friendly localStorage. var store = Retroix.storage('paddix');
+	// store.set('best', 1200); store.get('muted', false). No-ops if storage is blocked.
+	Retroix.storage = function (ns) {
+		var P = 'rx:' + (ns || 'game') + ':';
+		function safe(fn, d) { try { return fn(); } catch (e) { return d; } }
+		var store = {
+			get: function (key, fallback) { var d = fallback == null ? null : fallback; return safe(function () { var v = localStorage.getItem(P + key); return v == null ? d : JSON.parse(v); }, d); },
+			set: function (key, val) { safe(function () { localStorage.setItem(P + key, JSON.stringify(val)); }); return val; },
+			remove: function (key) { safe(function () { localStorage.removeItem(P + key); }); },
+			keys: function () { return safe(function () { var out = []; for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k.indexOf(P) === 0) { out.push(k.slice(P.length)); } } return out; }, []); },
+			clear: function () { store.keys().forEach(function (k) { store.remove(k); }); }
+		};
+		return store;
 	};
 
 	return Retroix;
