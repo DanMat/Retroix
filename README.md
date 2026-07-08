@@ -16,6 +16,11 @@ that all kept re-implementing the same plumbing. It gives you:
 - ⌨️ **Input** — keyboard (arrows + WASD → named actions), mouse and touch in logical coords.
 - 🔊 **8-bit audio** — synthesized on the Web Audio API, *zero sample files*: SFX presets (coin, jump, laser, explosion, powerup, hit…), short jingles, and custom tones, with persistent mute/volume.
 - 💥 **Game feel** — screen **shake**, **flash**, and **freeze-frame** (hitstop) to make hits land.
+- 🧲 **Arcade physics** — gravity/friction/max-vel integration + axis-separated AABB resolution with `onGround`/`blocked` flags.
+- 🗺️ **Tile grid** — cell↔world coords, and `solids()` that feeds collision rects straight into physics.
+- 🎥 **Camera** — follow a target, clamp to level bounds, `begin/end` world transform.
+- 🔀 **State machine** — `title` / `play` / `pause` / `over` with enter/update/exit hooks.
+- ⏱️ **Timers & tweens** — `after` / `every` callbacks and eased property tweens.
 - 📐 **Collision** — AABB / circle / circle-rect / point overlap tests.
 - 💾 **Storage** — namespaced, JSON-friendly `localStorage` for best scores and settings.
 - 🏆 **Leaderboard** — Supabase REST with a localStorage fallback (`top` / `submit` / `qualifies`).
@@ -32,14 +37,14 @@ that all kept re-implementing the same plumbing. It gives you:
 
 ```html
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/retroix@0.2.0/retroix.css">
-<script src="https://cdn.jsdelivr.net/npm/retroix@0.2.0/retroix.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/retroix@0.3.0/retroix.css">
+<script src="https://cdn.jsdelivr.net/npm/retroix@0.3.0/retroix.js"></script>
 ```
 
 Or from the GitHub repo (no npm needed):
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/DanMat/Retroix@v0.2.0/retroix.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/DanMat/Retroix@v0.3.0/retroix.js"></script>
 ```
 
 Or with a bundler:
@@ -82,6 +87,12 @@ import 'retroix/css';
 | `Retroix.audio(opts)` | `{ coin(), jump(), laser(), explosion(), …, play(name), jingle(name), tone(spec), sequence(notes), mute(v), volume(v), toggle() }` |
 | `Retroix.fx(dims, opts)` | `{ shake(a), flash(color,s), freeze(dur), frozen(), update(dt), preRender(ctx), postRender(ctx) }` |
 | `Retroix.hit` | `rects(a,b)`, `circles(a,b)`, `circleRect(c,r)`, `pointRect(px,py,r)`, `pointCircle(px,py,c)` |
+| `Retroix.physics` | `body(opts)`, `move(body, solids, dt)` — arcade integration + AABB resolution |
+| `Retroix.grid(cols, rows, tile)` | `{ at, set, cellAt, rectOf, forEach, solids(isSolid, region) }` |
+| `Retroix.camera(view, opts)` | `{ x, y, follow(t,l), clamp(), begin(ctx), end(ctx), worldToScreen, screenToWorld }` |
+| `Retroix.fsm(states, initial)` | `{ set(name,…), update(dt), render(ctx), is(name), current() }` |
+| `Retroix.timer()` | `{ after(s,fn), every(s,fn), tween(obj,props,dur,ease,done), cancel(t), update(dt) }` |
+| `Retroix.ease` | `linear, inQuad, outQuad, inOutQuad, inCubic, outCubic, outBack, outBounce` |
 | `Retroix.storage(ns)` | `{ get(key,fallback), set(key,val), remove(key), keys(), clear() }` |
 | `Retroix.leaderboard(cfg)` | `{ top(n), submit(initials,score,stage), qualifies(score), mode }` |
 | `Retroix.screens(root)` | `{ show(id), hideAll(), current() }` over `[data-screen]` elements |
@@ -123,6 +134,51 @@ if (!fx.frozen()) { updateWorld(dt); }   // hitstop pauses the world, not the lo
 fx.preRender(ctx);                        // shake offset applied
 drawWorld(ctx);
 fx.postRender(ctx);                       // flash overlay drawn on top
+```
+
+### Arcade physics + tile grid
+
+Bodies integrate gravity/friction and resolve against static rects. A grid turns
+your level into those rects for free:
+
+```js
+var grid = Retroix.grid(40, 30, 16);      // 40×30 tiles, 16px each
+grid.set(5, 20, 1);                        // 1 = solid
+
+var hero = Retroix.physics.body({ x: 80, y: 40, w: 12, h: 16, gravity: 0.6, friction: 0.2, maxVx: 4, maxVy: 12 });
+
+Retroix.loop(function (dt) {
+  var a = input.axis();
+  hero.vx = a.x * 4;
+  if (input.down('up') && hero.onGround) { hero.vy = -11; sfx.jump(); }
+
+  var solids = grid.solids(null, { x: hero.x - 40, y: hero.y - 40, w: 120, h: 120 }); // only nearby tiles
+  Retroix.physics.move(hero, solids, dt);
+  // hero.onGround / hero.blocked.left|right|up|down are now set for this frame
+}).start();
+```
+
+> Cap velocity (`maxVx`/`maxVy`) below your tile size — arcade physics steps
+> discretely, so an uncapped body can skip clean over a thin wall.
+
+### Camera, state machine & tweens
+
+```js
+var cam = Retroix.camera(view, { bounds: { x: 0, y: 0, w: 640, h: 480 } });
+cam.follow(hero, 0.1);                      // smooth follow
+cam.begin(ctx); drawWorld(ctx); cam.end(ctx);
+
+var game = Retroix.fsm({
+  title: { enter: function () { showScreen('title'); } },
+  play:  { update: function (dt) { stepWorld(dt); } },
+  over:  { enter: function () { sfx.jingle('gameover'); } }
+}, 'title');
+// game.set('play'); game.update(dt); if (game.is('play')) { … }
+
+var tm = Retroix.timer();
+tm.tween(hero, { y: hero.y - 20 }, 0.3, 'outBack');   // little hop
+tm.after(1.5, function () { game.set('over'); });
+// in the loop: tm.update(dt);
 ```
 
 ### Leaderboard config

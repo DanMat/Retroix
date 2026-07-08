@@ -6,8 +6,9 @@
  * one of them needs — a DPI-aware canvas, a render-safe game loop, keyboard /
  * mouse / touch input, a Supabase-or-localStorage leaderboard, overlay screens
  * with retro 3-initial high-score entry, drawing helpers, synthesized 8-bit
- * sound, screen-shake/flash/freeze game-feel, collision tests, and namespaced
- * storage — so a game is just its own update()/render() and level data.
+ * sound, screen-shake/flash/freeze game-feel, collision tests, namespaced
+ * storage, arcade physics, tile grids, a follow camera, a state machine, and
+ * timers/tweens — so a game is just its own update()/render() and level data.
  *
  * UMD: works as a <script> global (window.Retroix) or via import/require.
  */
@@ -17,7 +18,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
 	'use strict';
 
-	var Retroix = { version: '0.2.0' };
+	var Retroix = { version: '0.3.0' };
 
 	/* ------------------------------- util --------------------------------- */
 
@@ -475,6 +476,199 @@
 			clear: function () { store.keys().forEach(function (k) { store.remove(k); }); }
 		};
 		return store;
+	};
+
+	/* ------------------------------ physics ------------------------------- */
+
+	// Arcade physics — the lightweight kind platformers use, not a rigid-body
+	// engine. A "body" is { x, y, w, h } plus velocity you own; move() integrates
+	// gravity/friction and resolves axis-separated AABB collisions against an
+	// array of static `solids` ({ x, y, w, h }), setting contact flags.
+	// blocked.*/onGround are per-frame *contact* flags — true while a force keeps
+	// the body pushing into a solid (gravity, or a held key that re-sets velocity
+	// each frame). Cap speed with maxVx/maxVy below your solid/tile size so a
+	// single step can't jump clean over a wall (arcade physics has no sweeping).
+	Retroix.physics = {
+		body: function (o) {
+			o = o || {};
+			return {
+				x: o.x || 0, y: o.y || 0, w: o.w || 0, h: o.h || 0,
+				vx: o.vx || 0, vy: o.vy || 0,
+				gravity: o.gravity || 0, friction: o.friction || 0, bounce: o.bounce || 0,
+				maxVx: o.maxVx || 0, maxVy: o.maxVy || 0,
+				blocked: { left: false, right: false, up: false, down: false }, onGround: false
+			};
+		},
+		// Integrate + resolve one frame. dt in seconds (normalized to 60fps steps).
+		// Sets b.blocked.* and b.onGround; applies bounce and per-frame friction.
+		move: function (b, solids, dt) {
+			var f = (dt || 1 / 60) * 60, i, s;
+			b.blocked.left = b.blocked.right = b.blocked.up = b.blocked.down = false;
+			if (b.gravity) { b.vy += b.gravity * f; }
+			if (b.friction) { b.vx *= Math.pow(1 - Math.min(0.999, b.friction), f); }
+			if (b.maxVx) { b.vx = util.clamp(b.vx, -b.maxVx, b.maxVx); }
+			if (b.maxVy) { b.vy = util.clamp(b.vy, -b.maxVy, b.maxVy); }
+			solids = solids || [];
+			// X axis.
+			b.x += b.vx * f;
+			for (i = 0; i < solids.length; i++) {
+				s = solids[i];
+				if (Retroix.hit.rects(b, s)) {
+					if (b.vx > 0) { b.x = s.x - b.w; b.blocked.right = true; }
+					else if (b.vx < 0) { b.x = s.x + s.w; b.blocked.left = true; }
+					b.vx = -b.vx * b.bounce;
+				}
+			}
+			// Y axis.
+			b.onGround = false;
+			b.y += b.vy * f;
+			for (i = 0; i < solids.length; i++) {
+				s = solids[i];
+				if (Retroix.hit.rects(b, s)) {
+					if (b.vy > 0) { b.y = s.y - b.h; b.blocked.down = true; b.onGround = true; }
+					else if (b.vy < 0) { b.y = s.y + s.h; b.blocked.up = true; }
+					b.vy = -b.vy * b.bounce;
+				}
+			}
+			return b;
+		}
+	};
+
+	/* ------------------------------- grid --------------------------------- */
+
+	// Tile grid: values in a flat array, cell<->world conversion, and solids()
+	// that turns filled cells into collision rects for physics.move().
+	Retroix.grid = function (cols, rows, tile) {
+		tile = tile || 1;
+		var cells = []; for (var i = 0; i < cols * rows; i++) { cells.push(0); }
+		var g = { cols: cols, rows: rows, tile: tile, cells: cells };
+		g.inside = function (cx, cy) { return cx >= 0 && cy >= 0 && cx < cols && cy < rows; };
+		g.at = function (cx, cy) { return g.inside(cx, cy) ? cells[cy * cols + cx] : undefined; };
+		g.set = function (cx, cy, v) { if (g.inside(cx, cy)) { cells[cy * cols + cx] = v; } return g; };
+		g.cellAt = function (wx, wy) { return { cx: Math.floor(wx / tile), cy: Math.floor(wy / tile) }; };
+		g.rectOf = function (cx, cy) { return { x: cx * tile, y: cy * tile, w: tile, h: tile }; };
+		g.forEach = function (fn) { for (var cy = 0; cy < rows; cy++) { for (var cx = 0; cx < cols; cx++) { fn(cells[cy * cols + cx], cx, cy); } } };
+		// Collision rects for solid cells (default: any truthy). Pass a `region`
+		// rect to only build tiles near it — keeps physics cheap on big maps.
+		g.solids = function (isSolid, region) {
+			isSolid = isSolid || function (v) { return !!v; };
+			var out = [], x0 = 0, y0 = 0, x1 = cols, y1 = rows, cx, cy;
+			if (region) {
+				x0 = Math.max(0, Math.floor(region.x / tile)); y0 = Math.max(0, Math.floor(region.y / tile));
+				x1 = Math.min(cols, Math.ceil((region.x + region.w) / tile)); y1 = Math.min(rows, Math.ceil((region.y + region.h) / tile));
+			}
+			for (cy = y0; cy < y1; cy++) { for (cx = x0; cx < x1; cx++) { if (isSolid(cells[cy * cols + cx], cx, cy)) { out.push({ x: cx * tile, y: cy * tile, w: tile, h: tile }); } } }
+			return out;
+		};
+		return g;
+	};
+
+	/* ------------------------------ camera -------------------------------- */
+
+	// World-space camera. Move cam.x/.y directly or follow(target) each frame,
+	// then wrap world drawing: cam.begin(ctx); drawWorld(); cam.end(ctx). `view`
+	// is the canvas api (or { width, height }); `bounds` clamps to the level.
+	Retroix.camera = function (view, opts) {
+		opts = opts || {};
+		var W = view.width, H = view.height;
+		var cam = { x: 0, y: 0, zoom: opts.zoom || 1, bounds: opts.bounds || null, lerp: opts.lerp || 1 };
+		cam.clamp = function () {
+			var b = cam.bounds; if (!b) { return cam; }
+			cam.x = util.clamp(cam.x, b.x, Math.max(b.x, b.x + b.w - W / cam.zoom));
+			cam.y = util.clamp(cam.y, b.y, Math.max(b.y, b.y + b.h - H / cam.zoom));
+			return cam;
+		};
+		// Center on a target ({ x, y } or { x, y, w, h }); l is follow smoothing 0..1.
+		cam.follow = function (t, l) {
+			var k = l == null ? cam.lerp : l;
+			var tx = t.x + (t.w ? t.w / 2 : 0) - W / (2 * cam.zoom);
+			var ty = t.y + (t.h ? t.h / 2 : 0) - H / (2 * cam.zoom);
+			cam.x += (tx - cam.x) * k; cam.y += (ty - cam.y) * k;
+			return cam.clamp();
+		};
+		cam.begin = function (ctx) { ctx.save(); ctx.scale(cam.zoom, cam.zoom); ctx.translate(-Math.round(cam.x), -Math.round(cam.y)); };
+		cam.end = function (ctx) { ctx.restore(); };
+		cam.worldToScreen = function (x, y) { return { x: (x - cam.x) * cam.zoom, y: (y - cam.y) * cam.zoom }; };
+		cam.screenToWorld = function (x, y) { return { x: x / cam.zoom + cam.x, y: y / cam.zoom + cam.y }; };
+		return cam;
+	};
+
+	/* -------------------------------- fsm --------------------------------- */
+
+	// Finite state machine. states = { name: { enter, update, exit } } — each
+	// hook optional. set() runs the old state's exit() then the new one's enter()
+	// (extra args to set() are forwarded to enter()).
+	Retroix.fsm = function (states, initial) {
+		states = states || {};
+		var cur = null;
+		var api = {
+			set: function (name) {
+				if (name === cur) { return api; }
+				var s = states[cur]; if (s && s.exit) { s.exit(); }
+				cur = name;
+				var n = states[cur]; if (n && n.enter) { n.enter.apply(null, [].slice.call(arguments, 1)); }
+				return api;
+			},
+			update: function (dt) { var s = states[cur]; if (s && s.update) { s.update(dt); } return api; },
+			render: function (ctx) { var s = states[cur]; if (s && s.render) { s.render(ctx); } return api; },
+			is: function (name) { return cur === name; },
+			current: function () { return cur; }
+		};
+		if (initial != null) { api.set(initial); }
+		return api;
+	};
+
+	/* --------------------------- ease / timer ----------------------------- */
+
+	// Easing curves, t in [0,1] -> eased [0,1]. Use by name with timer.tween().
+	var ease = {
+		linear: function (t) { return t; },
+		inQuad: function (t) { return t * t; },
+		outQuad: function (t) { return t * (2 - t); },
+		inOutQuad: function (t) { return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; },
+		inCubic: function (t) { return t * t * t; },
+		outCubic: function (t) { return (--t) * t * t + 1; },
+		outBack: function (t) { var s = 1.70158; return 1 + (--t) * t * ((s + 1) * t + s); },
+		outBounce: function (t) {
+			if (t < 1 / 2.75) { return 7.5625 * t * t; }
+			if (t < 2 / 2.75) { t -= 1.5 / 2.75; return 7.5625 * t * t + 0.75; }
+			if (t < 2.5 / 2.75) { t -= 2.25 / 2.75; return 7.5625 * t * t + 0.9375; }
+			t -= 2.625 / 2.75; return 7.5625 * t * t + 0.984375;
+		}
+	};
+	Retroix.ease = ease;
+
+	// Scheduled callbacks and property tweens, all driven by one update(dt).
+	//   var tm = Retroix.timer();
+	//   tm.after(2, boom); tm.every(0.5, blink);
+	//   tm.tween(sprite, { x: 300, alpha: 0 }, 0.4, 'outCubic', onDone);
+	//   // in the loop:  tm.update(dt);
+	Retroix.timer = function () {
+		var timers = [], tweens = [];
+		return {
+			after: function (sec, fn) { var t = { t: 0, dur: sec, fn: fn, repeat: false }; timers.push(t); return t; },
+			every: function (sec, fn) { var t = { t: 0, dur: sec, fn: fn, repeat: true }; timers.push(t); return t; },
+			cancel: function (t) { var i = timers.indexOf(t); if (i >= 0) { timers.splice(i, 1); } i = tweens.indexOf(t); if (i >= 0) { tweens.splice(i, 1); } },
+			tween: function (obj, props, dur, easing, onDone) {
+				var from = {}, k; for (k in props) { from[k] = obj[k]; }
+				var tw = { obj: obj, from: from, to: props, dur: dur, t: 0, ease: (typeof easing === 'function' ? easing : ease[easing] || ease.linear), onDone: onDone };
+				tweens.push(tw); return tw;
+			},
+			update: function (dt) {
+				var i, t, k;
+				for (i = timers.length - 1; i >= 0; i--) {
+					t = timers[i]; t.t += dt;
+					if (t.t >= t.dur) { if (t.fn) { t.fn(); } if (t.repeat) { t.t -= t.dur; } else { timers.splice(i, 1); } }
+				}
+				for (i = tweens.length - 1; i >= 0; i--) {
+					var tw = tweens[i]; tw.t += dt;
+					var p = tw.dur <= 0 ? 1 : Math.min(1, tw.t / tw.dur), e = tw.ease(p);
+					for (k in tw.to) { tw.obj[k] = tw.from[k] + (tw.to[k] - tw.from[k]) * e; }
+					if (p >= 1) { tweens.splice(i, 1); if (tw.onDone) { tw.onDone(); } }
+				}
+			},
+			clear: function () { timers.length = 0; tweens.length = 0; }
+		};
 	};
 
 	return Retroix;
