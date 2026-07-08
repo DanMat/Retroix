@@ -1,8 +1,8 @@
 name: Release
 
 # One-click release. From the Actions tab, run this and pick patch / minor / major.
-# It bumps the version in package.json, commits, creates the matching vX.Y.Z tag,
-# pushes both, and then publishes to npm. jsDelivr picks up the new tag instantly.
+# It bumps the version in package.json, commits, tags vX.Y.Z, pushes, and then
+# publishes to npm — all in one job. jsDelivr picks up the new tag instantly.
 on:
   workflow_dispatch:
     inputs:
@@ -16,10 +16,11 @@ on:
           - major
 
 permissions:
-  contents: write
+  contents: write # push the version commit + tag
+  id-token: write # npm provenance
 
 jobs:
-  version:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,6 +30,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          registry-url: https://registry.npmjs.org
 
       - name: Configure git identity
         run: |
@@ -42,12 +44,12 @@ jobs:
       - name: Push commit and tag
         run: git push --follow-tags
 
-  # A tag pushed by GITHUB_TOKEN above will NOT trigger publish.yml's tag event
-  # (Actions won't recurse into itself), so we call the publish workflow directly.
-  publish:
-    needs: version
-    uses: ./.github/workflows/publish.yml
-    secrets: inherit
-    permissions:
-      contents: read
-      id-token: write
+      - name: Sanity check (module loads)
+        run: npm test
+
+      # Publish the freshly-bumped checkout. Done inline (rather than by calling
+      # publish.yml) so the whole release is one self-contained job.
+      - name: Publish to npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
