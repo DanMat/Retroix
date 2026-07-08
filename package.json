@@ -1,6 +1,6 @@
 {
   "name": "retroix",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A tiny, dependency-free retro arcade game engine: DPI-aware canvas, render-safe game loop, keyboard/mouse/touch input, Supabase-or-localStorage leaderboard, overlay screens with retro high-score entry, and drawing helpers.",
   "main": "retroix.js",
   "module": "retroix.js",
