@@ -1,0 +1,119 @@
+/* -------------------------------------------------------------------------
+ * Retroix — retro arcade UI theme.
+ * Neon-on-dark, Press Start 2P headings, and the overlay / initials /
+ * leaderboard styling every game shares. Override the CSS variables to reskin.
+ *
+ * Load the pixel font yourself (or set --rx-pixel):
+ *   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+ * ---------------------------------------------------------------------- */
+
+:root {
+	--rx-ink: #eaf0ff;
+	--rx-muted: #93a4d0;
+	--rx-panel: rgba(9, 12, 26, 0.92);
+	--rx-accent: #00e5ff;
+	--rx-accent-2: #39ff9e;
+	--rx-danger: #ff3b5c;
+	--rx-pixel: 'Press Start 2P', 'Courier New', monospace;
+	--rx-sans: 'Trebuchet MS', 'Segoe UI', system-ui, sans-serif;
+	--rx-radius: 12px;
+}
+
+.rx * { box-sizing: border-box; }
+
+/* Center the whole cabinet on a dark, glowing backdrop. */
+.rx-body {
+	margin: 0; min-height: 100vh;
+	display: flex; align-items: center; justify-content: center; padding: 14px;
+	font-family: var(--rx-sans); color: var(--rx-ink);
+	background: radial-gradient(1000px 700px at 50% -10%, #1a1140 0%, #0a0a1c 55%, #04040c 100%);
+	overflow: hidden; user-select: none; -webkit-user-select: none;
+}
+
+.rx-frame { display: flex; flex-direction: column; gap: 8px; }
+
+/* -------------------------------- HUD --------------------------------- */
+
+.rx-hud {
+	display: flex; align-items: center; justify-content: space-between; gap: 8px;
+	padding: 8px 14px; background: var(--rx-panel);
+	border: 1px solid rgba(255, 255, 255, .1); border-radius: var(--rx-radius);
+	font-family: var(--rx-pixel); font-size: clamp(9px, 2.2vw, 12px);
+}
+.rx-hud__label { display: block; font-size: 7px; color: var(--rx-muted); margin-bottom: 5px; letter-spacing: 1px; }
+
+/* ------------------------------ playfield ----------------------------- */
+
+.rx-playfield {
+	position: relative; border-radius: 14px; overflow: hidden;
+	box-shadow: 0 0 0 2px rgba(255, 255, 255, .08), 0 24px 60px rgba(0, 0, 0, .55);
+}
+.rx-canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+/* ------------------------------ screens ------------------------------- */
+
+.rx-screen {
+	position: absolute; inset: 0; display: flex; flex-direction: column;
+	align-items: center; justify-content: safe center; overflow-y: auto;
+	gap: 14px; padding: 22px; text-align: center;
+	background: rgba(4, 6, 16, .84); backdrop-filter: blur(2px); z-index: 5;
+}
+/* The hidden attribute must beat display:flex, or an invisible screen would sit
+   on top of the game and swallow every click. */
+.rx-screen[hidden] { display: none; }
+.rx-screen > *:not(.rx-lb-scroll) { flex-shrink: 0; }
+
+.rx-logo {
+	font-family: var(--rx-pixel); font-size: clamp(26px, 8.5vw, 54px); margin: 0; color: #fff; letter-spacing: 2px;
+	text-shadow: 0 0 10px var(--rx-accent-2), 4px 4px 0 var(--rx-accent);
+}
+.rx-tagline { margin: 0; color: var(--rx-muted); font-size: clamp(12px, 3vw, 15px); }
+.rx-title { font-family: var(--rx-pixel); font-size: clamp(15px, 4.4vw, 24px); margin: 0; color: #fff; }
+.rx-sub { margin: 0; color: var(--rx-muted); font-size: 13px; }
+.rx-big { font-family: var(--rx-pixel); font-size: clamp(24px, 8vw, 44px); margin: 4px 0; color: var(--rx-accent); }
+.rx-hint { margin: 0; color: var(--rx-muted); font-size: 12px; }
+
+/* ------------------------------ buttons ------------------------------- */
+
+.rx-btns { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 6px; }
+.rx-btn {
+	font-family: var(--rx-pixel); font-size: 11px; color: var(--rx-ink);
+	background: rgba(255, 255, 255, .08); border: 2px solid rgba(255, 255, 255, .25);
+	border-radius: 10px; padding: 12px 16px; cursor: pointer;
+	transition: transform .08s ease, background .15s ease;
+}
+.rx-btn:hover { background: rgba(255, 255, 255, .16); }
+.rx-btn:active { transform: translateY(2px); }
+.rx-btn--primary { color: #04121a; background: var(--rx-accent); border-color: transparent; box-shadow: 0 0 16px rgba(0, 229, 255, .5); }
+.rx-btn--primary:hover { filter: brightness(1.08); }
+
+/* --------------------------- initials entry --------------------------- */
+
+.rx-slots { display: flex; gap: 14px; }
+.rx-slot { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px; border-radius: 10px; border: 2px solid transparent; cursor: pointer; }
+.rx-slot--active { border-color: var(--rx-accent); box-shadow: 0 0 14px rgba(0, 229, 255, .4); }
+.rx-slot-ch { font-family: var(--rx-pixel); font-size: clamp(26px, 8vw, 40px); color: #fff; width: 1.2em; text-align: center; }
+.rx-slot-up, .rx-slot-down { background: rgba(255, 255, 255, .1); border: none; color: var(--rx-accent); font-size: 16px; width: 42px; height: 26px; border-radius: 6px; cursor: pointer; }
+.rx-slot-up:active, .rx-slot-down:active { background: rgba(255, 255, 255, .25); }
+
+/* ----------------------------- leaderboard ---------------------------- */
+
+.rx-lb-scroll { width: 100%; flex: 0 1 auto; min-height: 0; overflow-y: auto; display: flex; justify-content: center; }
+.rx-lb { width: min(100%, 380px); border-collapse: collapse; font-size: 14px; }
+.rx-lb thead th { position: sticky; top: 0; background: #0a0c1c; font-family: var(--rx-pixel); font-size: 8px; color: var(--rx-muted); text-align: left; padding: 6px 8px 10px; letter-spacing: 1px; }
+.rx-lb td { padding: 7px 8px; border-top: 1px solid rgba(255, 255, 255, .08); }
+.rx-lb-ini { font-family: var(--rx-pixel); font-size: 12px; color: var(--rx-accent); letter-spacing: 1px; }
+.rx-lb-score { text-align: right; font-variant-numeric: tabular-nums; }
+.rx-lb tr:nth-child(1) .rx-lb-ini { color: var(--rx-accent-2); }
+.rx-lb-me td { background: rgba(0, 229, 255, .14); }
+.rx-lb-msg { text-align: center; color: var(--rx-muted); padding: 18px; }
+
+/* ------------------------------- toast -------------------------------- */
+
+.rx-toast {
+	position: absolute; top: 11%; left: 50%; transform: translateX(-50%) scale(.7);
+	font-family: var(--rx-pixel); font-size: clamp(11px, 3vw, 18px); color: #fff;
+	text-shadow: 0 0 10px var(--rx-accent), 0 2px 0 #000; opacity: 0; pointer-events: none;
+	transition: opacity .2s ease, transform .2s ease; z-index: 4; white-space: nowrap;
+}
+.rx-toast--show { opacity: 1; transform: translateX(-50%) scale(1); }

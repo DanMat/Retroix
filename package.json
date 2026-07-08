@@ -1,0 +1,49 @@
+{
+  "name": "retroix",
+  "version": "0.1.0",
+  "description": "A tiny, dependency-free retro arcade game engine: DPI-aware canvas, render-safe game loop, keyboard/mouse/touch input, Supabase-or-localStorage leaderboard, overlay screens with retro high-score entry, and drawing helpers.",
+  "main": "retroix.js",
+  "module": "retroix.js",
+  "browser": "retroix.js",
+  "unpkg": "retroix.js",
+  "jsdelivr": "retroix.js",
+  "type": "commonjs",
+  "files": [
+    "retroix.js",
+    "retroix.css",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": "./retroix.js",
+    "./retroix.css": "./retroix.css",
+    "./css": "./retroix.css"
+  },
+  "scripts": {
+    "test": "node -e \"require('./retroix.js'); console.log('retroix loads OK')\""
+  },
+  "keywords": [
+    "game-engine",
+    "retro",
+    "arcade",
+    "canvas",
+    "vanilla-javascript",
+    "no-build",
+    "leaderboard",
+    "html5-game",
+    "gamedev"
+  ],
+  "author": "DanMat",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DanMat/Retroix.git"
+  },
+  "bugs": {
+    "url": "https://github.com/DanMat/Retroix/issues"
+  },
+  "homepage": "https://github.com/DanMat/Retroix#readme",
+  "sideEffects": [
+    "retroix.css"
+  ]
+}
