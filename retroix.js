@@ -6,9 +6,10 @@
  * one of them needs — a DPI-aware canvas, a render-safe game loop, keyboard /
  * mouse / touch input, a Supabase-or-localStorage leaderboard, overlay screens
  * with retro 3-initial high-score entry, drawing helpers, synthesized 8-bit
- * sound, screen-shake/flash/freeze game-feel, collision tests, namespaced
- * storage, arcade physics, tile grids, a follow camera, a state machine, and
- * timers/tweens — so a game is just its own update()/render() and level data.
+ * sound and looping chiptune music, screen-shake/flash/freeze game-feel,
+ * collision tests, namespaced storage, arcade physics, tile grids, a follow
+ * camera, a state machine, and timers/tweens — so a game is just its own
+ * update()/render() and level data.
  *
  * UMD: works as a <script> global (window.Retroix) or via import/require.
  */
@@ -18,7 +19,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
 	'use strict';
 
-	var Retroix = { version: '0.3.0' };
+	var Retroix = { version: '1.0.0' };
 
 	/* ------------------------------- util --------------------------------- */
 
@@ -316,16 +317,25 @@
 		var STORE = 'rx-audio', persist = opts.persist !== false, saved = {};
 		if (persist) { try { saved = JSON.parse(localStorage.getItem(STORE)) || {}; } catch (e) {} }
 		var vol = saved.volume != null ? saved.volume : (opts.volume != null ? opts.volume : 0.35);
+		var musicVol = saved.musicVolume != null ? saved.musicVolume : (opts.musicVolume != null ? opts.musicVolume : 0.5);
 		var isMuted = saved.muted != null ? saved.muted : !!opts.muted;
-		var ctx = null, master = null, noiseBuf = null;
+		var ctx = null, master = null, sfxGain = null, musicGain = null, noiseBuf = null;
 
+		// Graph: sfx -> sfxGain(vol) ┐            master is a pure mute switch, so
+		//        music -> musicGain(musicVol) ┴-> master(0|1) -> destination
+		//        one mute silences both, but sfx and music keep independent volumes.
 		function ensure() {
 			if (!AC) { return false; }
-			if (!ctx) { ctx = new AC(); master = ctx.createGain(); master.gain.value = isMuted ? 0 : vol; master.connect(ctx.destination); }
+			if (!ctx) {
+				ctx = new AC();
+				master = ctx.createGain(); master.gain.value = isMuted ? 0 : 1; master.connect(ctx.destination);
+				sfxGain = ctx.createGain(); sfxGain.gain.value = vol; sfxGain.connect(master);
+				musicGain = ctx.createGain(); musicGain.gain.value = musicVol; musicGain.connect(master);
+			}
 			if (ctx.state === 'suspended') { ctx.resume(); }
 			return true;
 		}
-		function save() { if (persist) { try { localStorage.setItem(STORE, JSON.stringify({ volume: vol, muted: isMuted })); } catch (e) {} } }
+		function save() { if (persist) { try { localStorage.setItem(STORE, JSON.stringify({ volume: vol, musicVolume: musicVol, muted: isMuted })); } catch (e) {} } }
 		function noiseSource() {
 			if (!noiseBuf) { noiseBuf = ctx.createBuffer(1, (ctx.sampleRate * 0.5) | 0, ctx.sampleRate); var d = noiseBuf.getChannelData(0); for (var i = 0; i < d.length; i++) { d[i] = Math.random() * 2 - 1; } }
 			var s = ctx.createBufferSource(); s.buffer = noiseBuf; s.loop = true; return s;
@@ -359,7 +369,7 @@
 				if (spec.freqEnd) { osc.frequency.exponentialRampToValueAtTime(Math.max(1, noteFreq(spec.freqEnd)), t0 + dur); }
 				osc.connect(g); src = osc;
 			}
-			g.connect(master);
+			g.connect(sfxGain);
 			src.start(t0); src.stop(t0 + dur + rel);
 			return dur;
 		}
@@ -389,7 +399,7 @@
 			laser: function () { tone({ wave: 'sawtooth', freq: 900, freqEnd: 120, dur: 0.2, vol: 0.6 }); },
 			powerup: function () { sequence(['C5:0.06', 'E5:0.06', 'G5:0.06', 'C6:0.14'], { wave: 'square', vol: 0.6 }); },
 			hit: function () { tone({ type: 'noise', dur: 0.12, filter: 1200, vol: 0.7 }); tone({ wave: 'square', freq: 160, freqEnd: 80, dur: 0.12, vol: 0.5 }); },
-			explosion: function () { tone({ type: 'noise', dur: 0.5, filter: 900, vol: 0.9 }); }
+			explosion: function () { tone({ type: 'noise', dur: 0.5, filter: 900, vol: 0.9 }); duck(0.4, 0.5); }
 		};
 		var JINGLES = {
 			win: ['C5:0.12', 'E5:0.12', 'G5:0.12', 'C6:0.3'],
@@ -398,6 +408,118 @@
 			gameover: ['C5:0.18', 'G4:0.18', 'E4:0.18', 'C4:0.42']
 		};
 
+		/* -- background music: a looping, multi-voice chiptune sequencer -- */
+		// A "track" is data (no files): { tempo, stepsPerBeat, loop, voices:[{ wave,
+		// vol, notes }] }. `notes` is a space-separated step grid — a note ('C4',
+		// 'F#3'), '-' rest, or '.' to hold the previous note one more step. Voices
+		// can differ in length (they loop independently). Notes schedule ahead on
+		// the audio clock for tight timing, and route through musicGain.
+		var curTrack = null, mvoices = [], stepDur = 0.125, totalSteps = 0;
+		var stepIdx = 0, nextStepTime = 0, schedTimer = null, playing = false;
+		var LOOKAHEAD = 0.12, TICK = 25;
+
+		function parseVoice(v) {
+			var toks = typeof v.notes === 'string' ? v.notes.trim().split(/\s+/) : v.notes;
+			var byStep = {}, i = 0;
+			while (i < toks.length) {
+				var t = toks[i];
+				if (t === '-' || t === '.') { i++; continue; }
+				var steps = 1, j = i + 1;
+				while (j < toks.length && toks[j] === '.') { steps++; j++; }
+				byStep[i] = { note: t, steps: steps }; i = j;
+			}
+			return { wave: v.wave || 'square', vol: v.vol != null ? v.vol : 0.5, len: toks.length, byStep: byStep };
+		}
+		function musicNote(wave, note, t, dur, vol) {
+			var osc = ctx.createOscillator(); osc.type = wave;
+			osc.frequency.setValueAtTime(noteFreq(note), t);
+			var g = ctx.createGain(), peak = Math.max(0.0001, vol);
+			g.gain.setValueAtTime(0.0001, t);
+			g.gain.exponentialRampToValueAtTime(peak, t + 0.01);
+			g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+			osc.connect(g); g.connect(musicGain);
+			osc.start(t); osc.stop(t + dur + 0.02);
+		}
+		function scheduleStep(s, t) {
+			for (var vi = 0; vi < mvoices.length; vi++) {
+				var v = mvoices[vi], ev = v.byStep[s % v.len];
+				if (ev) { musicNote(v.wave, ev.note, t, ev.steps * stepDur * 0.92, v.vol); }
+			}
+		}
+		function scheduler() {
+			if (!ctx || ctx.state !== 'running') { return; }               // wait for unlock
+			if (nextStepTime < ctx.currentTime) { nextStepTime = ctx.currentTime + 0.05; } // re-anchor after a stall
+			while (nextStepTime < ctx.currentTime + LOOKAHEAD) {
+				scheduleStep(stepIdx, nextStepTime);
+				nextStepTime += stepDur;
+				stepIdx++;
+				if (stepIdx >= totalSteps) { if (curTrack && curTrack.loop === false) { playing = false; return; } stepIdx = 0; }
+			}
+		}
+		function startScheduler() { if (!schedTimer) { schedTimer = setInterval(scheduler, TICK); } }
+		function stopScheduler() { if (schedTimer) { clearInterval(schedTimer); schedTimer = null; } }
+		function rampMusic(to, secs) {
+			var t = ctx.currentTime;
+			musicGain.gain.cancelScheduledValues(t);
+			musicGain.gain.setValueAtTime(Math.max(0.0001, musicGain.gain.value), t);
+			musicGain.gain.exponentialRampToValueAtTime(Math.max(0.0001, to), t + secs);
+		}
+
+		// Play a track (object or a name from Retroix.tracks); crossfades from any
+		// current track. opts: { fade } seconds.
+		function music(track, o) {
+			if (typeof track === 'string') { track = Retroix.tracks[track]; }
+			if (!track || !ensure()) { return api; }
+			o = o || {};
+			var fade = o.fade != null ? o.fade : 0.4;
+			function begin() {
+				curTrack = track;
+				mvoices = (track.voices || []).map(parseVoice);
+				var spb = track.stepsPerBeat || 4, tempo = track.tempo || 120;
+				stepDur = 60 / tempo / spb;
+				totalSteps = 0;
+				for (var i = 0; i < mvoices.length; i++) { if (mvoices[i].len > totalSteps) { totalSteps = mvoices[i].len; } }
+				stepIdx = 0; nextStepTime = ctx.currentTime + 0.06; playing = true;
+				musicGain.gain.cancelScheduledValues(ctx.currentTime);
+				musicGain.gain.setValueAtTime(0.0001, ctx.currentTime);
+				musicGain.gain.exponentialRampToValueAtTime(Math.max(0.0001, musicVol), ctx.currentTime + fade);
+				startScheduler();
+			}
+			if (playing) { rampMusic(0.0001, fade); stopScheduler(); setTimeout(begin, fade * 1000); }
+			else { begin(); }
+			return api;
+		}
+		function stopMusic(fade) {
+			if (!musicGain || !playing) { playing = false; curTrack = null; return api; }
+			fade = fade != null ? fade : 0.3;
+			rampMusic(0.0001, fade);
+			setTimeout(stopScheduler, fade * 1000 + 20);
+			playing = false; curTrack = null;
+			return api;
+		}
+		function pauseMusic() { if (playing && musicGain) { stopScheduler(); rampMusic(0.0001, 0.1); } return api; }
+		function resumeMusic() {
+			if (playing && musicGain && !schedTimer) { nextStepTime = ctx.currentTime + 0.06; rampMusic(musicVol, 0.15); startScheduler(); }
+			return api;
+		}
+		// Briefly dip the music under a loud SFX so hits punch through.
+		function duck(amount, dur) {
+			if (!musicGain || !playing) { return api; }
+			amount = amount == null ? 0.35 : amount; dur = dur || 0.4;
+			var t = ctx.currentTime;
+			musicGain.gain.cancelScheduledValues(t);
+			musicGain.gain.setValueAtTime(Math.max(0.0001, musicGain.gain.value), t);
+			musicGain.gain.exponentialRampToValueAtTime(Math.max(0.0001, musicVol * amount), t + 0.05);
+			musicGain.gain.exponentialRampToValueAtTime(Math.max(0.0001, musicVol), t + dur);
+			return api;
+		}
+		function musicVolume(v) {
+			if (v == null) { return musicVol; }
+			musicVol = util.clamp(+v, 0, 1);
+			if (musicGain && playing && schedTimer) { musicGain.gain.setValueAtTime(Math.max(0.0001, musicVol), ctx.currentTime); }
+			save(); return api;
+		}
+
 		var api = {
 			ctx: function () { return ctx; },
 			tone: tone, sequence: sequence,
@@ -405,9 +527,12 @@
 			jingle: function (name, common) { var j = JINGLES[name]; if (j) { sequence(j, mergeObj({ wave: 'square', vol: 0.6 }, common || {})); } return api; },
 			unlock: function () { ensure(); return api; },
 			muted: function () { return isMuted; },
-			mute: function (v) { isMuted = v == null ? true : !!v; if (master) { master.gain.value = isMuted ? 0 : vol; } save(); return api; },
+			mute: function (v) { isMuted = v == null ? true : !!v; if (master) { master.gain.value = isMuted ? 0 : 1; } save(); return api; },
 			toggle: function () { return api.mute(!isMuted); },
-			volume: function (v) { if (v == null) { return vol; } vol = util.clamp(+v, 0, 1); if (master && !isMuted) { master.gain.value = vol; } save(); return api; },
+			volume: function (v) { if (v == null) { return vol; } vol = util.clamp(+v, 0, 1); if (sfxGain) { sfxGain.gain.value = vol; } save(); return api; },
+			// background music
+			music: music, stopMusic: stopMusic, pauseMusic: pauseMusic, resumeMusic: resumeMusic,
+			duck: duck, musicVolume: musicVolume, musicPlaying: function () { return playing; },
 			sfx: SFX, jingles: JINGLES, noteFreq: noteFreq
 		};
 		// Direct helpers: sfx.coin(), sfx.explosion(), … each returns api.
@@ -416,6 +541,39 @@
 		function unlock() { ensure(); }
 		['pointerdown', 'keydown', 'touchstart'].forEach(function (ev) { window.addEventListener(ev, unlock, { once: true }); });
 		return api;
+	};
+
+	// A few iconic starter loops for sfx.music('name'). Games can also pass their
+	// own track object per level — see the format on Retroix.audio's music engine.
+	Retroix.tracks = {
+		// bright, upbeat — title / menu
+		title: {
+			tempo: 126, stepsPerBeat: 4, voices: [
+				{ wave: 'square', vol: 0.30, notes: 'C5 E5 G5 E5 C5 E5 G5 B5 C6 . G5 . E5 . C5 .' },
+				{ wave: 'triangle', vol: 0.5, notes: 'C3 . . . G2 . . . A2 . . . G2 . . .' }
+			]
+		},
+		// driving minor groove — action / gameplay
+		action: {
+			tempo: 138, stepsPerBeat: 4, voices: [
+				{ wave: 'square', vol: 0.26, notes: 'C5 - C5 D#5 - D#5 G5 - G5 F5 D#5 - D5 - C5 -' },
+				{ wave: 'triangle', vol: 0.5, notes: 'C3 C3 . . D#3 . . . F3 . . . G3 . . .' }
+			]
+		},
+		// tense, chromatic — boss
+		boss: {
+			tempo: 150, stepsPerBeat: 4, voices: [
+				{ wave: 'square', vol: 0.26, notes: 'C5 C#5 C5 C#5 C5 - G5 - G#5 G5 G#5 G5 - - F5 -' },
+				{ wave: 'sawtooth', vol: 0.3, notes: 'C3 . C3 . C3 . C3 . G#2 . G#2 . G2 . G2 .' }
+			]
+		},
+		// slow, spacious — calm / results
+		calm: {
+			tempo: 96, stepsPerBeat: 4, voices: [
+				{ wave: 'triangle', vol: 0.4, notes: 'E5 . . . G5 . . . C6 . . . B5 . . .' },
+				{ wave: 'triangle', vol: 0.45, notes: 'C3 . . . . . . . A2 . . . . . . .' }
+			]
+		}
 	};
 
 	/* -------------------------------- fx ---------------------------------- */

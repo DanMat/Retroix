@@ -15,6 +15,7 @@ that all kept re-implementing the same plumbing. It gives you:
 - 🔁 **Render-safe game loop** — `requestAnimationFrame` with a clamped delta; can't die mid-frame.
 - ⌨️ **Input** — keyboard (arrows + WASD → named actions), mouse and touch in logical coords.
 - 🔊 **8-bit audio** — synthesized on the Web Audio API, *zero sample files*: SFX presets (coin, jump, laser, explosion, powerup, hit…), short jingles, and custom tones, with persistent mute/volume.
+- 🎵 **Chiptune music** — looping, multi-voice background tracks defined as data (no files): per-level tunes with crossfade, pause/resume, ducking under loud SFX, and an independent music volume under one master mute.
 - 💥 **Game feel** — screen **shake**, **flash**, and **freeze-frame** (hitstop) to make hits land.
 - 🧲 **Arcade physics** — gravity/friction/max-vel integration + axis-separated AABB resolution with `onGround`/`blocked` flags.
 - 🗺️ **Tile grid** — cell↔world coords, and `solids()` that feeds collision rects straight into physics.
@@ -37,14 +38,14 @@ that all kept re-implementing the same plumbing. It gives you:
 
 ```html
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/retroix@0.3.0/retroix.css">
-<script src="https://cdn.jsdelivr.net/npm/retroix@0.3.0/retroix.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/retroix@1.0.0/retroix.css">
+<script src="https://cdn.jsdelivr.net/npm/retroix@1.0.0/retroix.js"></script>
 ```
 
 Or from the GitHub repo (no npm needed):
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/DanMat/Retroix@v0.3.0/retroix.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/DanMat/Retroix@v1.0.0/retroix.js"></script>
 ```
 
 Or with a bundler:
@@ -84,7 +85,8 @@ import 'retroix/css';
 | `Retroix.canvas(el, w, h)` | `{ ctx, width, height, dpr, resize(), toLogical(cx,cy) }` |
 | `Retroix.loop(step, opts)` | `{ start(), stop(), isRunning() }` — `step(dt)` in seconds |
 | `Retroix.input(canvas, opts)` | `{ actions, pointer, down(a), axis(), onKeyDown(fn) }` |
-| `Retroix.audio(opts)` | `{ coin(), jump(), laser(), explosion(), …, play(name), jingle(name), tone(spec), sequence(notes), mute(v), volume(v), toggle() }` |
+| `Retroix.audio(opts)` | `{ coin(), …, play(name), jingle(name), tone(spec), sequence(notes), music(track), stopMusic(), pauseMusic(), resumeMusic(), duck(), musicVolume(v), mute(v), volume(v), toggle() }` |
+| `Retroix.tracks` | built-in chiptune loops: `title`, `action`, `boss`, `calm` |
 | `Retroix.fx(dims, opts)` | `{ shake(a), flash(color,s), freeze(dur), frozen(), update(dt), preRender(ctx), postRender(ctx) }` |
 | `Retroix.hit` | `rects(a,b)`, `circles(a,b)`, `circleRect(c,r)`, `pointRect(px,py,r)`, `pointCircle(px,py,c)` |
 | `Retroix.physics` | `body(opts)`, `move(body, solids, dt)` — arcade integration + AABB resolution |
@@ -118,6 +120,31 @@ sfx.tone({ wave: 'square', freq: 'C5', freqEnd: 'C6', dur: 0.15 }); // custom bl
 sfx.sequence(['C5:0.08', 'E5', 'G5']);   // your own melody
 
 sfx.toggle();                  // mute button; sfx.volume(0.5) to set level
+```
+
+### Chiptune background music
+
+Tracks are **data, not files** — a tempo and a step grid per voice. Each token
+is one step: a note (`C4`, `F#3`), `-` for a rest, or `.` to hold the previous
+note one more step. Give each level its own tune; switching crossfades.
+
+```js
+sfx.music('action');                 // a built-in loop from Retroix.tracks
+sfx.music(level.track, { fade: 0.6 });   // …or your own, per level (crossfades)
+
+sfx.pauseMusic();  sfx.resumeMusic();    // pause with the game
+sfx.duck(0.4, 0.5);                      // dip music under a big hit (auto on explosion)
+sfx.musicVolume(0.4);                    // music volume, independent of SFX
+sfx.stopMusic(0.5);
+
+// A track is just an object:
+var boss = {
+  tempo: 150, stepsPerBeat: 4,
+  voices: [
+    { wave: 'square',   vol: 0.26, notes: 'C5 C#5 C5 C#5 C5 - G5 - G#5 G5 G#5 G5 - - F5 -' },
+    { wave: 'sawtooth', vol: 0.30, notes: 'C3 . C3 . C3 . C3 . G#2 . G#2 . G2 . G2 .' }
+  ]
+};
 ```
 
 ### Game feel
