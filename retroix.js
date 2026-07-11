@@ -8,8 +8,8 @@
  * with retro 3-initial high-score entry, drawing helpers, synthesized 8-bit
  * sound and looping chiptune music, screen-shake/flash/freeze game-feel,
  * collision tests, namespaced storage, arcade physics, tile grids, a follow
- * camera, a state machine, and timers/tweens — so a game is just its own
- * update()/render() and level data.
+ * camera, a state machine, timers/tweens, and an autopilot dev-mode test bot —
+ * so a game is just its own update()/render() and level data.
  *
  * UMD: works as a <script> global (window.Retroix) or via import/require.
  */
@@ -19,7 +19,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
 	'use strict';
 
-	var Retroix = { version: '1.0.1' };
+	var Retroix = { version: '1.1.0' };
 
 	/* ------------------------------- util --------------------------------- */
 
@@ -831,6 +831,121 @@
 			},
 			clear: function () { timers.length = 0; tweens.length = 0; }
 		};
+	};
+
+	/* ----------------------------- autopilot ------------------------------ */
+
+	// Dev-mode test harness. A secret key combo (Konami code by default) unleashes
+	// a bot that plays the game unattended to check it's finishable and surface
+	// crashes / soft-locks. The engine can't know how to *win* an arbitrary game,
+	// so pass a game-specific `bot(api)` policy plus `progress()` / `isWin()` /
+	// `isFail()` predicates (closures over your game state). Without a bot, a
+	// generic input "masher" runs — enough to smoke-test boot->play and catch
+	// crashes. Results (finished / stuck / timeout / died, time, errors) print to
+	// the console and a small on-screen panel. cfg:
+	//   { combo, bot(api), progress(), isWin(), isFail(), start(), onReport(r),
+	//     timeout=180, stuck=10 }.  api: { press, release, tap, only, releaseAll,
+	//     t (seconds), frame }.  Returns { start(), stop(), running() }.
+	Retroix.autopilot = function (cfg) {
+		cfg = cfg || {};
+		var KONAMI = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
+		var combo = cfg.combo || KONAMI;
+		var TIMEOUT = cfg.timeout || 180, STUCK = cfg.stuck || 10;
+		var running = false, raf = null, frame = 0, startT = 0, held = {};
+		var maxProg = -Infinity, lastProgT = 0, errors = [], badge = null, panel = null;
+
+		function nkey(k) { return k.length === 1 ? k.toLowerCase() : k; }
+		function nowMs() { return typeof performance !== 'undefined' ? performance.now() : Date.now(); }
+		function errStr(e) { return (e && (e.message || e.toString())) || 'error'; }
+		function safe(fn) { try { return !!fn(); } catch (e) { errors.push(errStr(e)); return false; } }
+
+		// input synthesis — drives the game's real keydown/keyup handlers
+		function press(k) { if (held[k]) { return; } held[k] = 1; document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true })); }
+		function release(k) { if (!held[k]) { return; } delete held[k]; document.dispatchEvent(new KeyboardEvent('keyup', { key: k, bubbles: true })); }
+		function releaseAll() { for (var k in held) { release(k); } }
+		function tap(k, ms) { press(k); setTimeout(function () { release(k); }, ms || 70); }
+		function only(keys) { var want = {}, i; for (i = 0; i < keys.length; i++) { want[keys[i]] = 1; press(keys[i]); } for (var h in held) { if (!want[h]) { release(h); } } }
+		var api = { press: press, release: release, releaseAll: releaseAll, tap: tap, only: only, t: 0, frame: 0 };
+
+		// fallback bot: shove right, hop, shoot, poke confirm past menus
+		function masher(a) {
+			a.press('ArrowRight'); a.press('x');
+			if (frame % 26 === 0) { a.tap(' ', 90); }
+			if (frame % 100 === 0) { a.tap('Enter', 90); }
+		}
+		function log(m, c) { if (typeof console !== 'undefined' && console.log) { console.log('%c[autopilot] ' + m, 'color:' + (c || '#00e5ff')); } }
+
+		function start() {
+			if (running) { return; }
+			running = true; frame = 0; startT = nowMs(); maxProg = -Infinity; lastProgT = 0; errors.length = 0;
+			showBadge(); log('engaged — ' + (cfg.bot ? 'game bot' : 'generic masher'));
+			if (cfg.start) { try { cfg.start(); } catch (e) { errors.push(errStr(e)); } }
+			raf = requestAnimationFrame(tick);
+		}
+		function stop() { running = false; if (raf) { cancelAnimationFrame(raf); raf = null; } releaseAll(); hideBadge(); }
+
+		function tick() {
+			if (!running) { return; }
+			frame++; var t = (nowMs() - startT) / 1000; api.t = t; api.frame = frame;
+			var prog = cfg.progress ? (function () { try { var v = cfg.progress(); return typeof v === 'number' && isFinite(v) ? v : 0; } catch (e) { errors.push(errStr(e)); return 0; } })() : t;
+			if (prog > maxProg + 0.5) { maxProg = prog; lastProgT = t; }
+			if (cfg.isWin && safe(cfg.isWin)) { return finish('finished', t, prog); }
+			if (cfg.isFail && safe(cfg.isFail)) { return finish('died', t, prog); }
+			if (t > TIMEOUT) { return finish('timeout', t, prog); }
+			if (t - lastProgT > STUCK) { return finish('stuck', t, prog); }
+			try { (cfg.bot || masher)(api); } catch (e) { errors.push(errStr(e)); }
+			raf = requestAnimationFrame(tick);
+		}
+
+		function finish(result, t, prog) {
+			running = false; if (raf) { cancelAnimationFrame(raf); raf = null; } releaseAll();
+			var rep = { result: result, elapsedSec: +t.toFixed(1), frames: frame, maxProgress: Math.round(prog), errors: errors.slice() };
+			var ok = result === 'finished' && !rep.errors.length;
+			log('RESULT ' + result.toUpperCase() + ' · ' + rep.elapsedSec + 's · ' + rep.frames + 'f · progress ' + rep.maxProgress + ' · ' + rep.errors.length + ' error(s)', ok ? '#39ff9e' : '#ff5e7e');
+			for (var i = 0; i < rep.errors.length; i++) { if (console && console.error) { console.error('[autopilot] ' + rep.errors[i]); } }
+			showPanel(rep, ok);
+			if (cfg.onReport) { try { cfg.onReport(rep); } catch (e) {} }
+			return rep;
+		}
+
+		// self-contained DOM badge/panel (inline styles — no CSS dependency)
+		function showBadge() {
+			if (badge || typeof document === 'undefined' || !document.body) { return; }
+			badge = document.createElement('div');
+			badge.textContent = '◉ AUTOPILOT';
+			badge.setAttribute('style', 'position:fixed;top:10px;left:10px;z-index:99999;font:12px/1 monospace;color:#00e5ff;background:rgba(9,12,28,.85);padding:8px 12px;border:1px solid #00e5ff;border-radius:6px;letter-spacing:1px;pointer-events:none');
+			document.body.appendChild(badge);
+		}
+		function hideBadge() { if (badge && badge.parentNode) { badge.parentNode.removeChild(badge); } badge = null; }
+		function showPanel(r, ok) {
+			hideBadge();
+			if (typeof document === 'undefined' || !document.body) { return; }
+			panel = document.createElement('div');
+			panel.setAttribute('style', 'position:fixed;top:10px;left:10px;z-index:99999;font:12px/1.6 monospace;color:#eaf0ff;background:rgba(9,12,28,.94);padding:12px 14px;border:2px solid ' + (ok ? '#39ff9e' : '#ff5e7e') + ';border-radius:8px;max-width:340px');
+			panel.innerHTML = '<b style="color:' + (ok ? '#39ff9e' : '#ff5e7e') + '">AUTOPILOT · ' + r.result.toUpperCase() + '</b><br>' +
+				r.elapsedSec + 's · ' + r.frames + ' frames · progress ' + r.maxProgress + '<br>errors: ' + r.errors.length +
+				(r.errors.length ? '<br><span style="color:#ff8aa0">' + util.escapeHtml(r.errors[0]) + '</span>' : '') +
+				'<br><span style="color:#9fb0d8">press any key to dismiss</span>';
+			document.body.appendChild(panel);
+			var dismiss = function () { if (panel && panel.parentNode) { panel.parentNode.removeChild(panel); } panel = null; };
+			setTimeout(function () { document.addEventListener('keydown', dismiss, { once: true }); }, 400);
+			setTimeout(dismiss, 15000);
+		}
+
+		// secret-combo listener (always on; cheap) + crash capture while running
+		if (typeof document !== 'undefined') {
+			var buf = [];
+			document.addEventListener('keydown', function (e) {
+				buf.push(nkey(e.key)); if (buf.length > combo.length) { buf.shift(); }
+				if (buf.length === combo.length) {
+					var hit = true; for (var i = 0; i < combo.length; i++) { if (buf[i] !== nkey(combo[i])) { hit = false; break; } }
+					if (hit) { buf.length = 0; running ? stop() : start(); }
+				}
+			});
+			if (typeof window !== 'undefined') { window.addEventListener('error', function (e) { if (running) { errors.push((e.message || 'error') + (e.lineno ? ' @' + e.lineno : '')); } }); }
+		}
+
+		return { start: start, stop: stop, running: function () { return running; } };
 	};
 
 	return Retroix;

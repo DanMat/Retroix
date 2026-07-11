@@ -24,6 +24,7 @@ that all kept re-implementing the same plumbing. It gives you:
 - ⏱️ **Timers & tweens** — `after` / `every` callbacks and eased property tweens.
 - 📐 **Collision** — AABB / circle / circle-rect / point overlap tests.
 - 💾 **Storage** — namespaced, JSON-friendly `localStorage` for best scores and settings.
+- 🤖 **Autopilot** — a secret-combo dev mode that turns a bot loose to play your game unattended: checks it's *finishable*, and surfaces crashes and soft-locks with an on-screen report.
 - 🏆 **Leaderboard** — Supabase REST with a localStorage fallback (`top` / `submit` / `qualifies`).
 - 🪟 **Screens** — overlay manager, retro **3-initial high-score entry**, and a leaderboard table renderer.
 - ✨ **gfx** — `roundRect`, a particle-burst system, and a fading toast helper.
@@ -38,14 +39,14 @@ that all kept re-implementing the same plumbing. It gives you:
 
 ```html
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/retroix@1.0.1/retroix.css">
-<script src="https://cdn.jsdelivr.net/npm/retroix@1.0.1/retroix.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/retroix@1.1.0/retroix.css">
+<script src="https://cdn.jsdelivr.net/npm/retroix@1.1.0/retroix.js"></script>
 ```
 
 Or from the GitHub repo (no npm needed):
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/DanMat/Retroix@v1.0.1/retroix.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/DanMat/Retroix@v1.1.0/retroix.js"></script>
 ```
 
 Or with a bundler:
@@ -96,6 +97,7 @@ import 'retroix/css';
 | `Retroix.timer()` | `{ after(s,fn), every(s,fn), tween(obj,props,dur,ease,done), cancel(t), update(dt) }` |
 | `Retroix.ease` | `linear, inQuad, outQuad, inOutQuad, inCubic, outCubic, outBack, outBounce` |
 | `Retroix.storage(ns)` | `{ get(key,fallback), set(key,val), remove(key), keys(), clear() }` |
+| `Retroix.autopilot(cfg)` | secret-combo test bot — `{ start(), stop(), running() }` |
 | `Retroix.leaderboard(cfg)` | `{ top(n), submit(initials,score,stage), qualifies(score), mode }` |
 | `Retroix.screens(root)` | `{ show(id), hideAll(), current() }` over `[data-screen]` elements |
 | `Retroix.initials(el, {onEnter})` | 3-letter entry: `{ value(), reset(), handleKey(e), active }` |
@@ -120,6 +122,33 @@ sfx.tone({ wave: 'square', freq: 'C5', freqEnd: 'C6', dur: 0.15 }); // custom bl
 sfx.sequence(['C5:0.08', 'E5', 'G5']);   // your own melody
 
 sfx.toggle();                  // mute button; sfx.volume(0.5) to set level
+```
+
+### Autopilot (dev-mode test bot)
+
+A secret key combo (the **Konami code** by default) turns a bot loose to play
+your game unattended — great for checking a game is *finishable* and for
+catching crashes and soft-locks. The engine can't know how to *win* your game,
+so you supply a tiny `bot(api)` policy plus `progress()` / `isWin()` predicates
+(closures over your own state). It runs with a **stuck-watchdog**, a **timeout**,
+and **crash capture**, then prints an on-screen + console report
+(`finished` / `stuck` / `timeout` / `died`, time, and any errors). With no bot,
+a generic input **masher** still smoke-tests boot→play and catches crashes.
+
+```js
+Retroix.autopilot({
+  start:    function () { if (state === 'title') startGame(); },   // kick off a run
+  bot:      function (a) {                                          // drive the game
+    if (state !== 'playing') { return; }
+    a.press('x');                       // hold fire
+    a.press('ArrowRight');              // run right
+    if (player.onGround && player.blocked.right) { a.tap(' ', 120); } // hop obstacles
+  },
+  progress: function () { return levelIndex * 1e5 + player.x; },    // must climb (stuck watchdog)
+  isWin:    function () { return wonFlag; },
+  isFail:   function () { return state === 'gameover' && !wonFlag; }
+});
+// press ↑ ↑ ↓ ↓ ← → ← → B A to toggle it. api: press/release/tap/only, t, frame.
 ```
 
 ### Chiptune background music
