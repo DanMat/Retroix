@@ -19,7 +19,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
 	'use strict';
 
-	var Retroix = { version: '1.0.0' };
+	var Retroix = { version: '1.0.1' };
 
 	/* ------------------------------- util --------------------------------- */
 
@@ -61,17 +61,21 @@
 	/* ------------------------------- loop --------------------------------- */
 
 	// requestAnimationFrame loop with a clamped delta. `step(dt)` gets seconds.
-	// Render-safe by design: nothing runs until you start(), and stop() cancels
-	// cleanly, so a loop can never die mid-frame and fail to reschedule.
+	// Crash-safe by design: nothing runs until you start(), stop() cancels
+	// cleanly, and a throw inside step() is caught and logged (opts.onError to
+	// override) then the loop reschedules — one bad frame can never freeze the
+	// whole game.
 	Retroix.loop = function (step, opts) {
 		opts = opts || {};
 		var raf = null, last = 0, running = false, maxDt = opts.maxDt || 0.05;
+		var onError = opts.onError || function (e) { if (typeof console !== 'undefined' && console.error) { console.error('Retroix.loop: uncaught error in step()', e); } };
 		function frame(now) {
 			if (!running) { return; }
 			var dt = Math.min((now - last) / 1000, maxDt);
 			last = now;
-			step(dt);
-			raf = requestAnimationFrame(frame);
+			try { step(dt); }
+			catch (e) { onError(e); }
+			finally { if (running) { raf = requestAnimationFrame(frame); } }
 		}
 		return {
 			start: function () { if (running) { return; } running = true; last = performance.now(); raf = requestAnimationFrame(frame); },

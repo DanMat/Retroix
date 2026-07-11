@@ -38,14 +38,14 @@ that all kept re-implementing the same plumbing. It gives you:
 
 ```html
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/retroix@1.0.0/retroix.css">
-<script src="https://cdn.jsdelivr.net/npm/retroix@1.0.0/retroix.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/retroix@1.0.1/retroix.css">
+<script src="https://cdn.jsdelivr.net/npm/retroix@1.0.1/retroix.js"></script>
 ```
 
 Or from the GitHub repo (no npm needed):
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/DanMat/Retroix@v1.0.0/retroix.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/DanMat/Retroix@v1.0.1/retroix.js"></script>
 ```
 
 Or with a bundler:
