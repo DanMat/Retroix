@@ -19,7 +19,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
 	'use strict';
 
-	var Retroix = { version: '1.2.0' };
+	var Retroix = { version: '1.2.1' };
 
 	/* ------------------------------- util --------------------------------- */
 
@@ -884,7 +884,9 @@
 
 		// input synthesis — drives the game's real keydown/keyup handlers
 		function press(k) { if (held[k]) { return; } held[k] = 1; document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true })); }
-		function release(k) { if (!held[k]) { return; } delete held[k]; document.dispatchEvent(new KeyboardEvent('keyup', { key: k, bubbles: true })); }
+		// keyup always fires (even for keys we didn't press) so the bot can clear
+		// residual/human-held input — e.g. the combo's own ← → keydowns.
+		function release(k) { delete held[k]; document.dispatchEvent(new KeyboardEvent('keyup', { key: k, bubbles: true })); }
 		function releaseAll() { for (var k in held) { release(k); } }
 		function tap(k, ms) { press(k); setTimeout(function () { release(k); }, ms || 70); }
 		function only(keys) { var want = {}, i; for (i = 0; i < keys.length; i++) { want[keys[i]] = 1; press(keys[i]); } for (var h in held) { if (!want[h]) { release(h); } } }
@@ -903,6 +905,9 @@
 			running = true; frame = 0; startT = nowMs(); maxProg = -Infinity; lastProgT = 0; errors.length = 0;
 			lastDeaths = cfg.deaths ? getNum(cfg.deaths, 0) : 0; totalDeaths = 0; spots = {}; worst = { n: 0, loc: 0 };
 			showBadge(); log('engaged — ' + (cfg.bot ? 'game bot' : 'generic masher'));
+			// release the combo's own keydowns so ← → from the code don't leave the
+			// game thinking those keys are held while the bot plays.
+			if (typeof document !== 'undefined') { for (var ci = 0; ci < combo.length; ci++) { document.dispatchEvent(new KeyboardEvent('keyup', { key: combo[ci], bubbles: true })); } }
 			if (cfg.start) { try { cfg.start(); } catch (e) { errors.push(errStr(e)); } }
 			raf = requestAnimationFrame(tick);
 		}
