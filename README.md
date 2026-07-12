@@ -1,15 +1,23 @@
 # Retroix 🕹️
 
-> A tiny, **dependency-free** retro arcade game engine — the shared parts every small canvas game needs, extracted into one file you can drop in with a `<script>` tag.
+> A tiny, **dependency-free** retro game engine in a single file. Drop it in with a `<script>` tag — no build step, no npm required — and everything a small canvas game needs is there.
 
+[![Play the games](https://img.shields.io/badge/▶_Games-Live_Gallery-ffd166?style=for-the-badge)](https://danmat.github.io/Retroix/)
+&nbsp;
 ![No build step](https://img.shields.io/badge/build-none-brightgreen)
 ![Vanilla JS](https://img.shields.io/badge/Vanilla_JS-no_dependencies-f7df1e)
+[![npm](https://img.shields.io/npm/v/retroix?color=cb3837&logo=npm)](https://www.npmjs.com/package/retroix)
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 
-Retroix was extracted from a family of vanilla-JS arcade games
-([Paddix](https://github.com/DanMat/Paddix), [Alienix](https://github.com/DanMat/Alienix),
-[Space-Jam](https://github.com/DanMat/Space-Jam), [Castle](https://github.com/DanMat/Castle) …)
-that all kept re-implementing the same plumbing. It gives you:
+Retroix is a general-purpose 2D game engine for the browser. It bundles the
+plumbing every small game re-implements — a DPI-aware canvas, a crash-safe game
+loop, input, sound, physics, a camera, screens, leaderboards and more — so your
+game is just its own `update(dt)` / `render(ctx)` and level data. It ships as one
+UMD file (`window.Retroix`), works from a CDN or a bundler, and has **zero
+dependencies**.
+
+A whole **[gallery of games](https://danmat.github.io/Retroix/)** is built on it —
+they're the showcase, not the point. It gives you:
 
 - 🖥️ **DPI-aware canvas** — a fixed logical resolution scaled crisply to any size.
 - 🔁 **Render-safe game loop** — `requestAnimationFrame` with a clamped delta; can't die mid-frame.
@@ -31,6 +39,18 @@ that all kept re-implementing the same plumbing. It gives you:
 - 🎨 **`retroix.css`** — the neon-on-dark theme (HUD, buttons, screens, initials, leaderboard).
 
 …so a game is just its own `update(dt)` / `render(ctx)` and level data.
+
+## Games built on Retroix
+
+Seven full games run on the engine — each just a few hundred lines of game logic.
+They're the proving ground (and the fun part). **▶ [Play them all in the live gallery](https://danmat.github.io/Retroix/).**
+
+|  |  |
+| :---: | :---: |
+| [<img src="https://cdn.jsdelivr.net/gh/DanMat/Blastix@main/docs/social-preview.png" width="400" alt="Blastix">](https://danmat.github.io/Blastix/)<br>**[Blastix](https://danmat.github.io/Blastix/)** · run-and-gun platformer | [<img src="https://cdn.jsdelivr.net/gh/DanMat/Paddix@main/docs/social-preview.png" width="400" alt="Paddix">](https://danmat.github.io/Paddix/)<br>**[Paddix](https://danmat.github.io/Paddix/)** · brick-breaker |
+| [<img src="https://cdn.jsdelivr.net/gh/DanMat/Alienix@main/docs/social-preview.png" width="400" alt="Alienix">](https://danmat.github.io/Alienix/)<br>**[Alienix](https://danmat.github.io/Alienix/)** · twin-stick survivor | [<img src="https://cdn.jsdelivr.net/gh/DanMat/Space-Jam@main/docs/social-preview.png" width="400" alt="Space-Jam">](https://danmat.github.io/Space-Jam/)<br>**[Space-Jam](https://danmat.github.io/Space-Jam/)** · side-scrolling shmup |
+| [<img src="https://cdn.jsdelivr.net/gh/DanMat/BombJack@main/docs/social-preview.png" width="400" alt="BombJack">](https://danmat.github.io/BombJack/)<br>**[BombJack](https://danmat.github.io/BombJack/)** · vertical road shooter | [<img src="https://cdn.jsdelivr.net/gh/DanMat/Castle@main/docs/social-preview.png" width="400" alt="Castle">](https://danmat.github.io/Castle/)<br>**[Castle](https://danmat.github.io/Castle/)** · maze chase & rescue |
+| [<img src="https://cdn.jsdelivr.net/gh/DanMat/Nimix@main/docs/social-preview.png" width="400" alt="Nimix">](https://danmat.github.io/Nimix/)<br>**[Nimix](https://danmat.github.io/Nimix/)** · beach game of Nim | |
 
 ## Install
 

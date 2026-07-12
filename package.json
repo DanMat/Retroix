@@ -42,7 +42,7 @@
   "bugs": {
     "url": "https://github.com/DanMat/Retroix/issues"
   },
-  "homepage": "https://github.com/DanMat/Retroix#readme",
+  "homepage": "https://danmat.github.io/Retroix/",
   "sideEffects": [
     "retroix.css"
   ]

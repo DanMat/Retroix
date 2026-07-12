@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Retroix — a tiny retro game engine · game gallery</title>
+<meta name="description" content="Retroix is a tiny, dependency-free retro game engine in one file. These games are all built on it — click to play." />
+<meta property="og:title" content="Retroix — retro game engine + game gallery" />
+<meta property="og:description" content="A tiny, dependency-free retro game engine. Play the games built on it." />
+<meta property="og:image" content="https://cdn.jsdelivr.net/gh/DanMat/Blastix@main/docs/social-preview.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
+<style>
+  :root { --ink:#eaf0ff; --muted:#9fb0d8; --accent:#00e5ff; --accent2:#ffd166; --panel:rgba(9,12,28,.72); --pixel:'Press Start 2P',monospace; --sans:'Trebuchet MS','Segoe UI',system-ui,sans-serif; }
+  * { box-sizing:border-box; margin:0; }
+  body { font-family:var(--sans); color:var(--ink); background:radial-gradient(1200px 700px at 50% -10%,#241b4d 0%,#0a0a1f 55%,#05050f 100%); min-height:100vh; padding:40px 18px 60px; }
+  .wrap { max-width:1040px; margin:0 auto; }
+  header { text-align:center; margin-bottom:14px; }
+  .logo { font-family:var(--pixel); font-size:clamp(30px,8vw,64px); letter-spacing:3px; color:#fff; text-shadow:0 0 12px var(--accent),5px 5px 0 #ff2e97; }
+  .tag { color:var(--muted); font-size:clamp(13px,3vw,17px); margin-top:14px; }
+  .sub { color:var(--muted); font-size:13px; margin-top:8px; }
+  .links { display:flex; flex-wrap:wrap; gap:10px; justify-content:center; margin:22px 0 6px; }
+  .btn { font-family:var(--pixel); font-size:10px; color:#081018; background:var(--accent); border:2px solid transparent; border-radius:9px; padding:11px 15px; text-decoration:none; box-shadow:0 0 16px rgba(0,229,255,.4); transition:transform .08s; }
+  .btn:hover { transform:translateY(-2px); }
+  .btn--ghost { color:var(--ink); background:rgba(255,255,255,.08); border-color:rgba(255,255,255,.22); box-shadow:none; }
+  .divider { font-family:var(--pixel); font-size:12px; color:var(--accent2); text-align:center; letter-spacing:2px; margin:44px 0 22px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:18px; }
+  .card { display:flex; flex-direction:column; border-radius:14px; overflow:hidden; background:var(--panel); border:1px solid rgba(255,255,255,.1); box-shadow:0 16px 40px rgba(0,0,0,.45); transition:transform .12s, border-color .12s; }
+  .card:hover { transform:translateY(-4px); border-color:var(--accent); }
+  .thumb { display:block; }
+  .thumb img { display:block; width:100%; aspect-ratio:2/1; object-fit:cover; background:#0a0a1f; }
+  .card__body { padding:14px 16px 16px; }
+  .card__name { font-family:var(--pixel); font-size:15px; color:#fff; }
+  .card__tag { color:var(--muted); font-size:13px; margin-top:8px; }
+  .card__foot { display:flex; align-items:center; gap:14px; margin-top:12px; }
+  .play { font-family:var(--pixel); font-size:10px; color:var(--accent); text-decoration:none; }
+  .play:hover { color:var(--accent2); }
+  .repo { color:var(--muted); font-size:12px; text-decoration:none; }
+  .repo:hover { color:var(--ink); }
+  .install { margin:46px auto 0; max-width:640px; background:var(--panel); border:1px solid rgba(255,255,255,.1); border-radius:12px; padding:18px 20px; }
+  .install h3 { font-family:var(--pixel); font-size:12px; color:var(--accent2); margin-bottom:12px; }
+  pre { background:#05060f; border:1px solid rgba(255,255,255,.08); border-radius:8px; padding:12px 14px; overflow-x:auto; font-size:13px; color:#cfe6ff; }
+  footer { text-align:center; color:var(--muted); font-size:12px; margin-top:40px; }
+  footer a { color:var(--accent); text-decoration:none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 class="logo">RETROIX</h1>
+    <p class="tag">A tiny, <strong>dependency-free</strong> retro game engine — one file, no build step.</p>
+    <p class="sub">DPI canvas · game loop · input · 8-bit audio + chiptune music · physics · tile grids · camera · shake/flash · leaderboards · a Konami-code test bot.</p>
+    <div class="links">
+      <a class="btn" href="https://github.com/DanMat/Retroix#readme">Docs &amp; API</a>
+      <a class="btn btn--ghost" href="https://github.com/DanMat/Retroix">GitHub</a>
+      <a class="btn btn--ghost" href="https://www.npmjs.com/package/retroix">npm</a>
+    </div>
+  </header>
+
+  <div class="divider">▚ GAMES BUILT ON RETROIX ▞</div>
+  <div class="grid" id="grid"></div>
+
+  <div class="install">
+    <h3>Drop it in — no build</h3>
+    <pre>&lt;script src="https://cdn.jsdelivr.net/npm/retroix/retroix.js"&gt;&lt;/script&gt;
+&lt;link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/retroix/retroix.css"&gt;</pre>
+  </div>
+
+  <footer>Each game is a few hundred lines of game logic on top of Retroix · <a href="https://github.com/DanMat/Retroix">MIT</a></footer>
+</div>
+
+<script>
+  var GAMES = [
+    { id:'Blastix',   name:'Blastix',   tag:'Run-and-gun platformer (Mario + Contra)' },
+    { id:'Paddix',    name:'Paddix',    tag:'Brick-breaker across 8 themed stages' },
+    { id:'Alienix',   name:'Alienix',   tag:'Twin-stick arena survivor' },
+    { id:'Space-Jam', name:'Space-Jam', tag:'Side-scrolling shoot-’em-up, 10 bosses' },
+    { id:'BombJack',  name:'BombJack',  tag:'Vertical road-combat shooter' },
+    { id:'Castle',    name:'Castle',    tag:'Top-down maze chase &amp; rescue' },
+    { id:'Nimix',     name:'Nimix',     tag:'Beach game of misère Nim vs an AI' }
+  ];
+  document.getElementById('grid').innerHTML = GAMES.map(function (g) {
+    var demo = 'https://danmat.github.io/' + g.id + '/';
+    var img = 'https://cdn.jsdelivr.net/gh/DanMat/' + g.id + '@main/docs/social-preview.png';
+    var repo = 'https://github.com/DanMat/' + g.id;
+    return '<div class="card">' +
+      '<a class="thumb" href="' + demo + '"><img loading="lazy" src="' + img + '" alt="' + g.name + '" /></a>' +
+      '<div class="card__body"><div class="card__name">' + g.name + '</div>' +
+      '<div class="card__tag">' + g.tag + '</div>' +
+      '<div class="card__foot"><a class="play" href="' + demo + '">▶ PLAY</a>' +
+      '<a class="repo" href="' + repo + '">source ↗</a></div></div></div>';
+  }).join('');
+</script>
+</body>
+</html>
