@@ -39,14 +39,14 @@ that all kept re-implementing the same plumbing. It gives you:
 
 ```html
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/retroix@1.1.0/retroix.css">
-<script src="https://cdn.jsdelivr.net/npm/retroix@1.1.0/retroix.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/retroix@1.2.0/retroix.css">
+<script src="https://cdn.jsdelivr.net/npm/retroix@1.2.0/retroix.js"></script>
 ```
 
 Or from the GitHub repo (no npm needed):
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/DanMat/Retroix@v1.1.0/retroix.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/DanMat/Retroix@v1.2.0/retroix.js"></script>
 ```
 
 Or with a bundler:
@@ -97,7 +97,8 @@ import 'retroix/css';
 | `Retroix.timer()` | `{ after(s,fn), every(s,fn), tween(obj,props,dur,ease,done), cancel(t), update(dt) }` |
 | `Retroix.ease` | `linear, inQuad, outQuad, inOutQuad, inCubic, outCubic, outBack, outBounce` |
 | `Retroix.storage(ns)` | `{ get(key,fallback), set(key,val), remove(key), keys(), clear() }` |
-| `Retroix.autopilot(cfg)` | secret-combo test bot — `{ start(), stop(), running() }` |
+| `Retroix.autopilot(cfg)` | secret-combo test bot (finishability / chokepoints) — `{ start(), stop(), running() }` |
+| `Retroix.jumpReach(opts)` | `{ maxDist, maxHeight, airtimeFrames, apexFrames }` from jump physics |
 | `Retroix.leaderboard(cfg)` | `{ top(n), submit(initials,score,stage), qualifies(score), mode }` |
 | `Retroix.screens(root)` | `{ show(id), hideAll(), current() }` over `[data-screen]` elements |
 | `Retroix.initials(el, {onEnter})` | 3-letter entry: `{ value(), reset(), handleKey(e), active }` |
@@ -127,28 +128,36 @@ sfx.toggle();                  // mute button; sfx.volume(0.5) to set level
 ### Autopilot (dev-mode test bot)
 
 A secret key combo (the **Konami code** by default) turns a bot loose to play
-your game unattended — great for checking a game is *finishable* and for
-catching crashes and soft-locks. The engine can't know how to *win* your game,
-so you supply a tiny `bot(api)` policy plus `progress()` / `isWin()` predicates
-(closures over your own state). It runs with a **stuck-watchdog**, a **timeout**,
-and **crash capture**, then prints an on-screen + console report
-(`finished` / `stuck` / `timeout` / `died`, time, and any errors). With no bot,
-a generic input **masher** still smoke-tests boot→play and catches crashes.
+your game unattended — to check it's *finishable* and to surface crashes,
+soft-locks and **impassable spots**. The engine can't *win* your game, so supply
+a `bot(api)` policy + closures over your state. The recommended model: give the
+game **infinite lives** (respawn in place) and pass `deaths()` (a monotonic
+failure counter) + `location()`. The bot keeps trying; if it dies
+`deathsPerSpot` times within one spot, that's flagged an impassable
+**chokepoint** — with the coordinate to fix. A **stuck-watchdog**, **timeout**,
+`isWin()`, and **crash capture** round it out, and the report names the worst
+death hotspot. (No bot → a generic **masher** smoke-tests boot→play.)
 
 ```js
 Retroix.autopilot({
-  start:    function () { if (state === 'title') startGame(); },   // kick off a run
-  bot:      function (a) {                                          // drive the game
-    if (state !== 'playing') { return; }
-    a.press('x');                       // hold fire
-    a.press('ArrowRight');              // run right
-    if (player.onGround && player.blocked.right) { a.tap(' ', 120); } // hop obstacles
-  },
-  progress: function () { return levelIndex * 1e5 + player.x; },    // must climb (stuck watchdog)
+  start:    function () { testMode = true; if (state === 'title') startGame(); }, // infinite lives
+  stop:     function () { testMode = false; },
+  bot:      botDrive,                                    // uses grid/physics to jump gaps
+  progress: function () { return levelIndex * 1e5 + player.x; },
+  location: function () { return levelIndex * 1e5 + deathX; },  // where it last died
+  deaths:   function () { return deathCount; },          // you bump this on each respawn
   isWin:    function () { return wonFlag; },
-  isFail:   function () { return state === 'gameover' && !wonFlag; }
+  deathsPerSpot: 6
 });
-// press ↑ ↑ ↓ ↓ ← → ← → B A to toggle it. api: press/release/tap/only, t, frame.
+// toggle with ↑ ↑ ↓ ↓ ← → ← → B A. api: press/release/tap/only, t, frame.
+```
+
+Pair it with a **static** reachability check so you catch impossible geometry
+without even running the bot:
+
+```js
+var reach = Retroix.jumpReach({ jump: JUMP, gravity: GRAV, run: RUN });
+// reach.maxDist — if a level gap is wider than this, the jump is impossible.
 ```
 
 ### Chiptune background music

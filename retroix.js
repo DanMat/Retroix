@@ -19,7 +19,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
 	'use strict';
 
-	var Retroix = { version: '1.1.0' };
+	var Retroix = { version: '1.2.0' };
 
 	/* ------------------------------- util --------------------------------- */
 
@@ -833,31 +833,54 @@
 		};
 	};
 
+	/* ---------------------------- jump reach ------------------------------ */
+
+	// Static platformer reachability from arcade-physics jump params (per-60fps-
+	// frame units, matching Retroix.physics): how high and how far one jump goes.
+	// Compare maxDist against your level's gap widths to catch impossible jumps
+	// before the bot even runs — a pure-data finishability check.
+	//   var r = Retroix.jumpReach({ jump: 10.6, gravity: 0.62, run: 2.7 });
+	//   // r.maxDist ≈ 92 (px), r.maxHeight ≈ 90 (px)
+	Retroix.jumpReach = function (o) {
+		o = o || {};
+		var v0 = o.jump || 0, g = o.gravity || 0.01, run = o.run || 0;
+		var airtime = 2 * v0 / g;
+		return { apexFrames: v0 / g, airtimeFrames: airtime, maxHeight: (v0 * v0) / (2 * g), maxDist: run * airtime };
+	};
+
 	/* ----------------------------- autopilot ------------------------------ */
 
 	// Dev-mode test harness. A secret key combo (Konami code by default) unleashes
 	// a bot that plays the game unattended to check it's finishable and surface
-	// crashes / soft-locks. The engine can't know how to *win* an arbitrary game,
-	// so pass a game-specific `bot(api)` policy plus `progress()` / `isWin()` /
-	// `isFail()` predicates (closures over your game state). Without a bot, a
-	// generic input "masher" runs — enough to smoke-test boot->play and catch
-	// crashes. Results (finished / stuck / timeout / died, time, errors) print to
-	// the console and a small on-screen panel. cfg:
-	//   { combo, bot(api), progress(), isWin(), isFail(), start(), onReport(r),
-	//     timeout=180, stuck=10 }.  api: { press, release, tap, only, releaseAll,
-	//     t (seconds), frame }.  Returns { start(), stop(), running() }.
+	// crashes / soft-locks. The engine can't *win* an arbitrary game, so pass a
+	// game-specific bot(api) policy + closures over your state. Two failure models:
+	//   • Finishability (recommended): give the game "infinite lives" (respawn in
+	//     place) and pass deaths() (a monotonic failure counter) + location(). The
+	//     bot keeps trying; if it dies `deathsPerSpot` times within one `bucket` of
+	//     units, that spot is flagged an impassable CHOKEPOINT (adjust the map).
+	//     Pair with Retroix.jumpReach for a static "gap wider than the jump" check.
+	//   • One-shot: pass isFail() to end the run on the first death.
+	// Also watches progress() (stuck watchdog), a timeout, isWin() (success) and
+	// crashes; prints an on-screen + console report (with the worst death hotspot).
+	// Without a bot a generic masher smoke-tests boot->play. cfg: { combo, start(),
+	// stop(), bot(api), progress(), location(), deaths(), isWin(), isFail(),
+	// deathsPerSpot=6, bucket=24, stuck=12, timeout=300, onReport(r) }. api:
+	// { press, release, tap, only, releaseAll, t, frame }. -> { start,stop,running }.
 	Retroix.autopilot = function (cfg) {
 		cfg = cfg || {};
 		var KONAMI = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
 		var combo = cfg.combo || KONAMI;
-		var TIMEOUT = cfg.timeout || 180, STUCK = cfg.stuck || 10;
+		var TIMEOUT = cfg.timeout || 300, STUCK = cfg.stuck || 12;
+		var DEATHS_PER_SPOT = cfg.deathsPerSpot || 6, BUCKET = cfg.bucket || 24;
 		var running = false, raf = null, frame = 0, startT = 0, held = {};
 		var maxProg = -Infinity, lastProgT = 0, errors = [], badge = null, panel = null;
+		var lastDeaths = 0, totalDeaths = 0, spots = {}, worst = { n: 0, loc: 0 };
 
 		function nkey(k) { return k.length === 1 ? k.toLowerCase() : k; }
 		function nowMs() { return typeof performance !== 'undefined' ? performance.now() : Date.now(); }
 		function errStr(e) { return (e && (e.message || e.toString())) || 'error'; }
 		function safe(fn) { try { return !!fn(); } catch (e) { errors.push(errStr(e)); return false; } }
+		function getNum(fn, d) { try { var v = fn(); return typeof v === 'number' && isFinite(v) ? v : d; } catch (e) { errors.push(errStr(e)); return d; } }
 
 		// input synthesis — drives the game's real keydown/keyup handlers
 		function press(k) { if (held[k]) { return; } held[k] = 1; document.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true })); }
@@ -878,30 +901,48 @@
 		function start() {
 			if (running) { return; }
 			running = true; frame = 0; startT = nowMs(); maxProg = -Infinity; lastProgT = 0; errors.length = 0;
+			lastDeaths = cfg.deaths ? getNum(cfg.deaths, 0) : 0; totalDeaths = 0; spots = {}; worst = { n: 0, loc: 0 };
 			showBadge(); log('engaged — ' + (cfg.bot ? 'game bot' : 'generic masher'));
 			if (cfg.start) { try { cfg.start(); } catch (e) { errors.push(errStr(e)); } }
 			raf = requestAnimationFrame(tick);
 		}
-		function stop() { running = false; if (raf) { cancelAnimationFrame(raf); raf = null; } releaseAll(); hideBadge(); }
+		function stop() { running = false; if (raf) { cancelAnimationFrame(raf); raf = null; } releaseAll(); hideBadge(); if (cfg.stop) { try { cfg.stop(); } catch (e) {} } }
 
 		function tick() {
 			if (!running) { return; }
 			frame++; var t = (nowMs() - startT) / 1000; api.t = t; api.frame = frame;
-			var prog = cfg.progress ? (function () { try { var v = cfg.progress(); return typeof v === 'number' && isFinite(v) ? v : 0; } catch (e) { errors.push(errStr(e)); return 0; } })() : t;
+
+			if (cfg.isWin && safe(cfg.isWin)) { return finish('finished', t); }
+
+			// death bucketing — count each failure by where it happened; a spot
+			// that kills the bot deathsPerSpot times is an impassable chokepoint.
+			if (cfg.deaths) {
+				var d = getNum(cfg.deaths, lastDeaths);
+				if (d > lastDeaths) {
+					var loc = cfg.location ? getNum(cfg.location, maxProg) : getNum(cfg.progress || function () { return t; }, 0);
+					var key = Math.round(loc / BUCKET);
+					spots[key] = (spots[key] || 0) + (d - lastDeaths); totalDeaths += (d - lastDeaths);
+					if (spots[key] > worst.n) { worst = { n: spots[key], loc: loc }; }
+					lastDeaths = d;
+					if (spots[key] >= DEATHS_PER_SPOT) { return finish('chokepoint', t); }
+				}
+			} else if (cfg.isFail && safe(cfg.isFail)) { return finish('died', t); }
+
+			var prog = getNum(cfg.progress || function () { return t; }, 0);
 			if (prog > maxProg + 0.5) { maxProg = prog; lastProgT = t; }
-			if (cfg.isWin && safe(cfg.isWin)) { return finish('finished', t, prog); }
-			if (cfg.isFail && safe(cfg.isFail)) { return finish('died', t, prog); }
-			if (t > TIMEOUT) { return finish('timeout', t, prog); }
-			if (t - lastProgT > STUCK) { return finish('stuck', t, prog); }
+			if (t > TIMEOUT) { return finish('timeout', t); }
+			if (t - lastProgT > STUCK) { return finish('stuck', t); }
 			try { (cfg.bot || masher)(api); } catch (e) { errors.push(errStr(e)); }
 			raf = requestAnimationFrame(tick);
 		}
 
-		function finish(result, t, prog) {
-			running = false; if (raf) { cancelAnimationFrame(raf); raf = null; } releaseAll();
-			var rep = { result: result, elapsedSec: +t.toFixed(1), frames: frame, maxProgress: Math.round(prog), errors: errors.slice() };
+		function finish(result, t) {
+			running = false; if (raf) { cancelAnimationFrame(raf); raf = null; } releaseAll(); if (cfg.stop) { try { cfg.stop(); } catch (e) {} }
+			var rep = { result: result, elapsedSec: +t.toFixed(1), frames: frame, maxProgress: Math.round(maxProg === -Infinity ? 0 : maxProg),
+				deaths: totalDeaths, hotspot: worst.n ? { location: Math.round(worst.loc), deaths: worst.n } : null, errors: errors.slice() };
 			var ok = result === 'finished' && !rep.errors.length;
-			log('RESULT ' + result.toUpperCase() + ' · ' + rep.elapsedSec + 's · ' + rep.frames + 'f · progress ' + rep.maxProgress + ' · ' + rep.errors.length + ' error(s)', ok ? '#39ff9e' : '#ff5e7e');
+			var hs = rep.hotspot ? ' · worst spot @' + rep.hotspot.location + ' (' + rep.hotspot.deaths + '×)' : '';
+			log('RESULT ' + result.toUpperCase() + ' · ' + rep.elapsedSec + 's · ' + rep.frames + 'f · progress ' + rep.maxProgress + ' · deaths ' + rep.deaths + hs + ' · ' + rep.errors.length + ' error(s)', ok ? '#39ff9e' : '#ff5e7e');
 			for (var i = 0; i < rep.errors.length; i++) { if (console && console.error) { console.error('[autopilot] ' + rep.errors[i]); } }
 			showPanel(rep, ok);
 			if (cfg.onReport) { try { cfg.onReport(rep); } catch (e) {} }
@@ -923,7 +964,10 @@
 			panel = document.createElement('div');
 			panel.setAttribute('style', 'position:fixed;top:10px;left:10px;z-index:99999;font:12px/1.6 monospace;color:#eaf0ff;background:rgba(9,12,28,.94);padding:12px 14px;border:2px solid ' + (ok ? '#39ff9e' : '#ff5e7e') + ';border-radius:8px;max-width:340px');
 			panel.innerHTML = '<b style="color:' + (ok ? '#39ff9e' : '#ff5e7e') + '">AUTOPILOT · ' + r.result.toUpperCase() + '</b><br>' +
-				r.elapsedSec + 's · ' + r.frames + ' frames · progress ' + r.maxProgress + '<br>errors: ' + r.errors.length +
+				r.elapsedSec + 's · ' + r.frames + ' frames · progress ' + r.maxProgress + '<br>deaths: ' + r.deaths +
+				(r.hotspot ? '<br><span style="color:#ffd166">worst spot: @' + r.hotspot.location + ' · ' + r.hotspot.deaths + ' deaths</span>' : '') +
+				(r.result === 'chokepoint' ? '<br><span style="color:#ff8aa0">impassable — adjust the map here</span>' : '') +
+				'<br>errors: ' + r.errors.length +
 				(r.errors.length ? '<br><span style="color:#ff8aa0">' + util.escapeHtml(r.errors[0]) + '</span>' : '') +
 				'<br><span style="color:#9fb0d8">press any key to dismiss</span>';
 			document.body.appendChild(panel);
