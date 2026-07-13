@@ -37,6 +37,15 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      # Regenerate the minified artifacts from the readable source and stage them
+      # so they can never go stale. `npm version` makes its release commit with a
+      # plain `git commit`, which folds in any already-staged files — so staging
+      # the min files here lands them in the same tagged commit that goes to npm.
+      - name: Minify
+        run: |
+          npm run minify
+          git add retroix.min.js retroix.min.css
+
       # `npm version` edits package.json, makes the commit, and tags it vX.Y.Z.
       # Block scalar (|) so the colon in the commit message doesn't break YAML.
       - name: Bump version and tag

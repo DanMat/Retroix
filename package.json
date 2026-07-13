@@ -10,7 +10,9 @@
   "type": "commonjs",
   "files": [
     "retroix.js",
+    "retroix.min.js",
     "retroix.css",
+    "retroix.min.css",
     "README.md",
     "LICENSE"
   ],
@@ -20,6 +22,7 @@
     "./css": "./retroix.css"
   },
   "scripts": {
+    "minify": "npx --yes esbuild retroix.js --minify --outfile=retroix.min.js && npx --yes esbuild retroix.css --minify --outfile=retroix.min.css",
     "test": "node -e \"require('./retroix.js'); console.log('retroix loads OK')\""
   },
   "keywords": [
